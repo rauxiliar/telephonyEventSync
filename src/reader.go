@@ -29,7 +29,6 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 			log.Printf("[READER] Stopping reader after cleanup")
 			return
 		default:
-			start := time.Now()
 			res, err := rLocal.XReadGroup(ctx, &redis.XReadGroupArgs{
 				Group:    config.Redis.Group,
 				Consumer: config.Redis.Consumer,
@@ -75,9 +74,9 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 								if err == nil {
 									eventTimestamp := time.Unix(0, timestamp*1000)
 									readTime := time.Now()
-									readLatency := readTime.Sub(eventTimestamp)
-									if readLatency > 200 {
-										log.Printf("[WARNING] High reader latency from event trigger detected for message %s: %v", msg.ID, readLatency)
+									readerLatency := readTime.Sub(eventTimestamp)
+									if readerLatency > config.Processing.ReaderMaxLatency {
+										log.Printf("[WARNING] High reader latency from event trigger detected for message %s: %v", msg.ID, readerLatency)
 									}
 								}
 							}
@@ -98,15 +97,6 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 						log.Printf("[WARNING] Buffer full, message discarded: %s", msg.ID)
 					}
 				}
-			}
-
-			latency := time.Since(start)
-			metrics.Lock()
-			metrics.latency = latency
-			metrics.Unlock()
-
-			if latency > config.Processing.ReaderMaxLatency {
-				log.Printf("[WARNING] High reader processing latency detected: %v", latency)
 			}
 		}
 	}

@@ -61,12 +61,10 @@ func printMetrics() {
 
 	for range ticker.C {
 		metrics.Lock()
-		log.Printf("[METRICS] Messages processed (last 5s): %d, Errors: %d, Queue size: %d, Read Latency: %v, Write Latency: %v, Last sync: %v\n",
+		log.Printf("[METRICS] Messages processed (last 5s): %d, Errors: %d, Queue size: %d, Last sync: %v\n",
 			metrics.messagesProcessed,
 			metrics.errors,
 			metrics.queueSize,
-			metrics.latency,
-			metrics.latencyWrite,
 			metrics.lastSyncTime.Format(time.RFC3339))
 
 		// Reset counter after each print

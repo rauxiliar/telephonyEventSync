@@ -28,15 +28,13 @@ func startLatencyChecker(config Config) {
 			totalLatency := now.Sub(eventTime)
 
 			if totalLatency > config.Processing.TotalMaxLatency {
-				log.Printf("[WARNING] High latency detected since event timestamp for message %s: %v", check.id, totalLatency)
+				log.Printf("[WARNING] High total latency detected since event trigger until writer processing for message %s: %v", check.id, totalLatency)
 			}
 		}
 	}()
 }
 
 func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []message, workerID int, config Config) {
-	start := time.Now()
-
 	// Execute pipeline
 	cmds, err := pipe.Exec(ctx)
 	if err != nil {
@@ -55,8 +53,8 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			// Calculate latency
 			writerTime := time.Now()
 			writerLatency := writerTime.Sub(msg.readTime)
-			if writerLatency > 200 {
-				log.Printf("[WARNING] High writer latency after read processing detected for message %s: %v", msg.id, writerLatency)
+			if writerLatency > config.Processing.WriterMaxLatency {
+				log.Printf("[WARNING] High writer latency after reader processing detected for message %s: %v", msg.id, writerLatency)
 			}
 
 			// Send to latency channel
@@ -79,6 +77,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 
 			metrics.Lock()
 			metrics.messagesProcessed++
+			metrics.lastSyncTime = time.Now()
 			metrics.Unlock()
 		} else {
 			log.Printf("[WRITER ERROR - XADD] Worker %d: %v\n", workerID, cmd.Err())
@@ -86,15 +85,6 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			metrics.errors++
 			metrics.Unlock()
 		}
-	}
-
-	latency := time.Since(start)
-	metrics.Lock()
-	metrics.latencyWrite = latency
-	metrics.Unlock()
-
-	if latency > config.Processing.WriterMaxLatency {
-		log.Printf("[WARNING] High writer processing latency detected: %v", latency)
 	}
 }
 
