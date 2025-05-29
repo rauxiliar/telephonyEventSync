@@ -106,7 +106,8 @@ STREAM_JOBS=freeswitch:telephony:background-jobs # Background jobs stream
 
 ```env
 # Reader configuration
-READER_BATCH_SIZE=5000            # Number of messages to read at once
+READER_WORKERS=10                # Number of parallel reader workers
+READER_BATCH_SIZE=5000           # Number of messages to read at once
 READER_MAX_LATENCY=50ms          # Maximum acceptable read latency
 READER_BLOCK_TIME=10ms           # Block time for XReadGroup operation
 

@@ -1,9 +1,9 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"time"
-	"log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,11 +34,10 @@ func startHealthServer() {
 		defer metrics.Unlock()
 
 		c.JSON(http.StatusOK, gin.H{
-			"messages_processed": 	metrics.messagesProcessed,
-			"errors":            	metrics.errors,
-			"queue_size":        	metrics.queueSize,
-			"latency":         	 	metrics.latency.String(),
-			"last_sync":        	metrics.lastSyncTime.Format(time.RFC3339),
+			"messages_processed": metrics.messagesProcessed,
+			"errors":             metrics.errors,
+			"queue_size":         metrics.queueSize,
+			"last_sync":          metrics.lastSyncTime.Format(time.RFC3339),
 		})
 	})
 

@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +37,7 @@ type Config struct {
 		ReaderBatchSize  int64
 		ReaderMaxLatency time.Duration
 		ReaderBlockTime  time.Duration
+		ReaderWorkers    int
 
 		// Writer configuration
 		WriterBatchSize       int
@@ -88,6 +88,9 @@ func validateConfig(config *Config) error {
 	if config.Processing.BufferSize <= 0 {
 		return fmt.Errorf("buffer size must be greater than 0")
 	}
+	if config.Processing.ReaderWorkers <= 0 {
+		return fmt.Errorf("reader workers must be greater than 0")
+	}
 	if config.Processing.WriterWorkers <= 0 {
 		return fmt.Errorf("writer workers must be greater than 0")
 	}
@@ -113,9 +116,6 @@ func getConfig() Config {
 		hostname = "unknown"
 	}
 
-	// Generate incremental consumer ID
-	consumerID := atomic.AddUint64(&consumerCounter, 1)
-
 	// Redis Local
 	config.Redis.Local.Address = getEnv("REDIS_LOCAL_ADDR", "localhost:6379")
 	config.Redis.Local.Password = getEnv("REDIS_LOCAL_PASSWORD", "")
@@ -135,7 +135,7 @@ func getConfig() Config {
 	// Redis Consumer Group
 	config.Redis.Group = getEnv("REDIS_GROUP", "sync_group")
 	baseConsumer := getEnv("REDIS_CONSUMER", "sync_worker")
-	config.Redis.Consumer = baseConsumer + "_" + hostname + "_" + strconv.FormatUint(consumerID, 10)
+	config.Redis.Consumer = baseConsumer + "_" + hostname
 
 	// Streams
 	config.Streams = []string{
@@ -147,6 +147,7 @@ func getConfig() Config {
 	config.Processing.ReaderBatchSize = getEnvAsInt64("READER_BATCH_SIZE", 5000)
 	config.Processing.ReaderMaxLatency = getEnvAsDuration("READER_MAX_LATENCY", 50*time.Millisecond)
 	config.Processing.ReaderBlockTime = getEnvAsDuration("READER_BLOCK_TIME", 10*time.Millisecond)
+	config.Processing.ReaderWorkers = getEnvAsInt("READER_WORKERS", 3)
 
 	// Processing - Writer
 	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", 10)

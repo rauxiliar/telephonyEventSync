@@ -13,7 +13,7 @@ import (
 
 var stopChan = make(chan struct{})
 
-func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
+func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, config Config) {
 	defer wg.Done()
 
 	// Pre-allocate streams slice with exact size
@@ -26,7 +26,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 	for {
 		select {
 		case <-stopChan:
-			log.Printf("[READER] Stopping reader after cleanup")
+			log.Printf("[READER %d] Stopping reader after cleanup", id)
 			return
 		default:
 			res, err := rLocal.XReadGroup(ctx, &redis.XReadGroupArgs{
@@ -42,7 +42,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 				if err == redis.Nil {
 					continue
 				}
-				log.Printf("[READER ERROR] %v\n", err)
+				log.Printf("[READER %d] Error: %v\n", id, err)
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
@@ -53,13 +53,8 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 
 			for _, streamRes := range res {
 				for _, msg := range streamRes.Messages {
-					// Create new map for each message
-					values := make(map[string]string, config.Processing.ReaderBatchSize)
-					for k, v := range msg.Values {
-						if str, ok := v.(string); ok {
-							values[k] = str
-						}
-					}
+					eventStr, _ := msg.Values["event"].(string)
+					values := map[string]string{"event": eventStr}
 
 					// Extract event timestamp if available
 					var eventTimestamp int64
@@ -72,11 +67,12 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 								timestampStr := eventStr[start : start+end]
 								timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
 								if err == nil {
-									eventTimestamp := time.Unix(0, timestamp*1000)
+									eventTimestamp = timestamp * 1000 // Convert to nanoseconds
 									readTime := time.Now()
-									readerLatency := readTime.Sub(eventTimestamp)
+									eventTime := time.Unix(0, eventTimestamp)
+									readerLatency := readTime.Sub(eventTime)
 									if readerLatency > config.Processing.ReaderMaxLatency {
-										log.Printf("[WARNING] High reader latency from event trigger detected for message %s: %v", msg.ID, readerLatency)
+										log.Printf("[READER %d] High reader latency since event trigger detected for message %s: %v", id, msg.ID, readerLatency)
 									}
 								}
 							}
@@ -94,7 +90,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 					case <-stopChan:
 						return
 					default:
-						log.Printf("[WARNING] Buffer full, message discarded: %s", msg.ID)
+						log.Printf("[READER %d] Buffer full, message discarded: %s", id, msg.ID)
 					}
 				}
 			}

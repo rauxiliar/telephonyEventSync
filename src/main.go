@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -17,8 +18,6 @@ type Metrics struct {
 	messagesProcessed int64
 	errors            int64
 	lastSyncTime      time.Time
-	latency           time.Duration
-	latencyWrite      time.Duration
 	queueSize         int
 }
 
@@ -127,10 +126,14 @@ func main() {
 	// Channel for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start reader and multiple writers
+	// Start multiple readers and multiple writers
+	wg.Add(1 + config.Processing.ReaderWorkers)
+	for i := range config.Processing.ReaderWorkers {
+		configCopy := config
+		configCopy.Redis.Consumer = fmt.Sprintf("%s_%d", config.Redis.Consumer, i)
+		go reader(ctx, ch, &wg, i, configCopy)
+	}
 	wg.Add(1 + config.Processing.WriterWorkers)
-	go reader(ctx, ch, &wg, config)
 	for i := range config.Processing.WriterWorkers {
 		go writer(ctx, ch, &wg, i, config)
 	}
