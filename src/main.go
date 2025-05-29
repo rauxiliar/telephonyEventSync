@@ -1,0 +1,174 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Metrics struct {
+	sync.Mutex
+	messagesProcessed int64
+	errors            int64
+	lastSyncTime      time.Time
+	latency           time.Duration
+	latencyWrite      time.Duration
+	queueSize         int
+}
+
+type message struct {
+	stream         string
+	id             string
+	values         map[string]string
+	timestamp      time.Time // Timestamp quando a mensagem foi processada
+	eventTimestamp int64     // Timestamp do evento original
+}
+
+var (
+	// Redis clients
+	rLocal  *redis.Client
+	rRemote *redis.Client
+
+	// Metrics
+	metrics = &Metrics{
+		lastSyncTime: time.Now(),
+	}
+
+	// Health monitor
+	healthMonitor *HealthMonitor
+)
+
+func createGroup(ctx context.Context, client *redis.Client, stream string, groupName string) error {
+	// Try to create the group, if it exists, that's fine
+	err := client.XGroupCreateMkStream(ctx, stream, groupName, "0").Err()
+	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
+		log.Printf("[ERROR] Failed to create group %s in stream %s: %v", groupName, stream, err)
+		return err
+	}
+	log.Printf("[INFO] Group %s created/verified in stream %s", groupName, stream)
+	return nil
+}
+
+func printMetrics() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		metrics.Lock()
+		log.Printf("[METRICS] Messages processed (last 5s): %d, Errors: %d, Queue size: %d, Read Latency: %v, Write Latency: %v, Last sync: %v\n",
+			metrics.messagesProcessed,
+			metrics.errors,
+			metrics.queueSize,
+			metrics.latency,
+			metrics.latencyWrite,
+			metrics.lastSyncTime.Format(time.RFC3339))
+
+		// Reset counter after each print
+		metrics.messagesProcessed = 0
+		metrics.Unlock()
+	}
+}
+
+func main() {
+	// Create root context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	config := getConfig()
+
+	// Initialize health monitor
+	healthMonitor = NewHealthMonitor(config)
+	healthMonitor.Start()
+
+	// Connect to local and remote Redis with optimized settings
+	rLocal = redis.NewClient(&redis.Options{
+		Addr:         config.Redis.Local.Address,
+		Password:     config.Redis.Local.Password,
+		DB:           config.Redis.Local.DB,
+		PoolSize:     config.Redis.Local.PoolSize,
+		MinIdleConns: config.Redis.Local.MinIdleConns,
+		MaxRetries:   config.Redis.Local.MaxRetries,
+	})
+	rRemote = redis.NewClient(&redis.Options{
+		Addr:         config.Redis.Remote.Address,
+		Password:     config.Redis.Remote.Password,
+		DB:           config.Redis.Remote.DB,
+		PoolSize:     config.Redis.Remote.PoolSize,
+		MinIdleConns: config.Redis.Remote.MinIdleConns,
+		MaxRetries:   config.Redis.Remote.MaxRetries,
+	})
+
+	// Verify connections
+	if err := rLocal.Ping(ctx).Err(); err != nil {
+		log.Fatalf("Error connecting to local Redis: %v", err)
+	}
+	if err := rRemote.Ping(ctx).Err(); err != nil {
+		log.Fatalf("Error connecting to remote Redis: %v", err)
+	}
+
+	// Create groups in local streams
+	for _, stream := range config.Streams {
+		if err := createGroup(ctx, rLocal, stream, config.Redis.Group); err != nil {
+			log.Fatalf("Error creating group in stream %s: %v", stream, err)
+		}
+	}
+
+	// Initialize cleanup mechanism
+	cleanup := NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, config.Streams)
+	cleanup.Start()
+
+	ch := make(chan message, config.Processing.BufferSize)
+	var wg sync.WaitGroup
+
+	// Channel for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start reader and multiple writers
+	wg.Add(1 + config.Processing.WriterWorkers)
+	go reader(ctx, ch, &wg, config)
+	for i := range config.Processing.WriterWorkers {
+		go writer(ctx, ch, &wg, i, config)
+	}
+	go printMetrics()
+
+	// Start HTTP server for health checks
+	go startHealthServer()
+
+	// Start latency checker
+	startLatencyChecker(config)
+
+	// Wait for interrupt signal
+	<-sigChan
+	log.Println("Starting graceful shutdown...")
+
+	// Stop health monitor
+	healthMonitor.Stop()
+
+	// Signal reader to stop first
+	close(stopChan)
+
+	// Wait a bit for reader to stop
+	time.Sleep(100 * time.Millisecond)
+
+	// Close message channel
+	close(ch)
+
+	// Stop cleanup
+	cleanup.Stop()
+
+	// Wait for goroutines to finish
+	wg.Wait()
+
+	// Close Redis connections
+	rLocal.Close()
+	rRemote.Close()
+
+	log.Println("Shutdown complete")
+}

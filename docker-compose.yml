@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  telephony-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+    environment:
+      # Redis Local Configuration
+      - REDIS_LOCAL_ADDR=${REDIS_LOCAL_ADDR:-localhost:6379}
+      - REDIS_LOCAL_DB=${REDIS_LOCAL_DB:-2}
+      - REDIS_LOCAL_PASSWORD=${REDIS_LOCAL_PASSWORD:-}
+      - REDIS_LOCAL_POOL_SIZE=${REDIS_LOCAL_POOL_SIZE:-100}
+      - REDIS_LOCAL_MIN_IDLE_CONNS=${REDIS_LOCAL_MIN_IDLE_CONNS:-10}
+      - REDIS_LOCAL_MAX_RETRIES=${REDIS_LOCAL_MAX_RETRIES:-3}
+
+      # Redis Remote Configuration
+      - REDIS_REMOTE_ADDR=${REDIS_REMOTE_ADDR:-redis.qa-uc-cloud1.gocontact.internal:6379}
+      - REDIS_REMOTE_DB=${REDIS_REMOTE_DB:-2}
+      - REDIS_REMOTE_PASSWORD=${REDIS_REMOTE_PASSWORD:-}
+      - REDIS_REMOTE_POOL_SIZE=${REDIS_REMOTE_POOL_SIZE:-100}
+      - REDIS_REMOTE_MIN_IDLE_CONNS=${REDIS_REMOTE_MIN_IDLE_CONNS:-10}
+      - REDIS_REMOTE_MAX_RETRIES=${REDIS_REMOTE_MAX_RETRIES:-3}
+
+      # Redis Consumer Group Configuration
+      - REDIS_GROUP=${REDIS_GROUP:-sync_group}
+      - REDIS_CONSUMER=${REDIS_CONSUMER:-sync_worker}
+
+      # Stream Configuration
+      - STREAM_EVENTS=${STREAM_EVENTS:-freeswitch:telephony:events}
+      - STREAM_JOBS=${STREAM_JOBS:-freeswitch:telephony:background-jobs}
+
+      # Processing Configuration
+      - READER_BATCH_SIZE=${READER_BATCH_SIZE:-5000}
+      - READER_MAX_LATENCY=${READER_MAX_LATENCY:-50ms}
+      - READER_BLOCK_TIME=${READER_BLOCK_TIME:-10ms}
+      - BUFFER_SIZE=${BUFFER_SIZE:-100000}
+      - WRITER_WORKERS=${WRITER_WORKERS:-10}
+      - WRITER_PIPELINE_TIMEOUT=${WRITER_PIPELINE_TIMEOUT:-25ms}
+      - WRITER_BATCH_SIZE=${WRITER_BATCH_SIZE:-10}
+      - WRITER_MAX_LATENCY=${WRITER_MAX_LATENCY:-100ms}
+      - TOTAL_MAX_LATENCY=${TOTAL_MAX_LATENCY:-1000ms}
+
+      # Health Check Configuration
+      - HEALTH_CHECK_INTERVAL=5s
+      - HEALTH_RECOVERY_TIMEOUT=30s
+      - HEALTH_MAX_RETRIES=5
+      - HEALTH_PORT=8080
+
+      # Logging Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_OUTPUT=${LOG_OUTPUT:-stdout}
+
+    networks:
+      - telephony-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  telephony-network:
+    driver: bridge
