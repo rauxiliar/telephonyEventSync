@@ -24,11 +24,11 @@ func startLatencyChecker(config Config) {
 			}
 
 			now := time.Now()
-			eventTime := time.Unix(0, check.timestamp*1000)
+			eventTime := time.Unix(0, check.timestamp)
 			totalLatency := now.Sub(eventTime)
 
 			if totalLatency > config.Processing.TotalMaxLatency {
-				log.Printf("[WARNING] High latency detected for message %s: %v", check.id, totalLatency)
+				log.Printf("[WARNING] High latency detected since event timestamp for message %s: %v", check.id, totalLatency)
 			}
 		}
 	}()
@@ -52,24 +52,21 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 		if cmd.Err() == nil {
 			msg := pendingMsgs[i]
 
-			// Calculate latency if event timestamp is available
-			if msg.eventTimestamp > 0 {
-				eventTime := time.Unix(0, msg.eventTimestamp*1000)
-				writerTime := time.Now()
-				writerLatency := writerTime.Sub(eventTime)
-				if writerLatency > config.Processing.TotalMaxLatency {
-					log.Printf("[WARNING] High writer latency detected for message %s: %v", msg.id, writerLatency)
-				}
+			// Calculate latency
+			writerTime := time.Now()
+			writerLatency := writerTime.Sub(msg.readTime)
+			if writerLatency > 200 {
+				log.Printf("[WARNING] High writer latency after read processing detected for message %s: %v", msg.id, writerLatency)
+			}
 
-				// Send to latency channel
-				select {
-				case latencyChan <- latencyCheck{
-					id:        msg.id,
-					timestamp: msg.eventTimestamp,
-				}:
-				default:
-					log.Printf("[WARNING] Latency channel full, message %s discarded", msg.id)
-				}
+			// Send to latency channel
+			select {
+			case latencyChan <- latencyCheck{
+				id:        msg.id,
+				timestamp: msg.eventTimestamp,
+			}:
+			default:
+				log.Printf("[WARNING] Latency channel full, message %s discarded", msg.id)
 			}
 
 			// ACK the message

@@ -26,8 +26,8 @@ type message struct {
 	stream         string
 	id             string
 	values         map[string]string
-	timestamp      time.Time // Timestamp quando a mensagem foi processada
-	eventTimestamp int64     // Timestamp do evento original
+	readTime       time.Time // Timestamp when the message was read and processed
+	eventTimestamp int64     // Original event timestamp (in milliseconds)
 }
 
 var (

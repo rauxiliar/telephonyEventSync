@@ -18,7 +18,7 @@ RUN go mod download && \
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o telephonyEventSync ./src
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o telephonyEventSync ./src
 
 # Final stage
 FROM alpine:3.21

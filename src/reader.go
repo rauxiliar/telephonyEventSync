@@ -65,18 +65,19 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 					// Extract event timestamp if available
 					var eventTimestamp int64
 					if eventStr, ok := values["event"]; ok {
-						if idx := strings.Index(eventStr, "\"Event-Date-Timestamp\":\""); idx != -1 {
-							start := idx + 22
+						timestampKey := "\"Event-Date-Timestamp\":\""
+						if idx := strings.Index(eventStr, timestampKey); idx != -1 {
+							start := idx + len(timestampKey)
 							end := strings.Index(eventStr[start:], "\"")
 							if end != -1 {
 								timestampStr := eventStr[start : start+end]
-								if ts, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
-									eventTimestamp = ts
-									eventTime := time.Unix(0, ts*1000)
+								timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+								if err == nil {
+									eventTimestamp := time.Unix(0, timestamp*1000)
 									readTime := time.Now()
-									readLatency := readTime.Sub(eventTime)
-									if readLatency > config.Processing.TotalMaxLatency {
-										log.Printf("[WARNING] High reader latency detected for message %s: %v", msg.ID, readLatency)
+									readLatency := readTime.Sub(eventTimestamp)
+									if readLatency > 200 {
+										log.Printf("[WARNING] High reader latency from event trigger detected for message %s: %v", msg.ID, readLatency)
 									}
 								}
 							}
@@ -88,7 +89,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config C
 						stream:         streamRes.Stream,
 						id:             msg.ID,
 						values:         values,
-						timestamp:      time.Now(),
+						readTime:       time.Now(),
 						eventTimestamp: eventTimestamp,
 					}:
 					case <-stopChan:
