@@ -5,7 +5,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${HEALTH_PORT:-9876}:9876"
+    network_mode: host
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9876/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     deploy:
       resources:
         limits:
@@ -14,12 +25,3 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-    network_mode: host
-    env_file:
-      - .env
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s

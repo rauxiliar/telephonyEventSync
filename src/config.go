@@ -157,7 +157,7 @@ func getConfig() Config {
 	config.Health.CheckInterval = getEnvAsDuration("HEALTH_CHECK_INTERVAL", 5*time.Second)
 	config.Health.RecoveryTimeout = getEnvAsDuration("HEALTH_RECOVERY_TIMEOUT", 30*time.Second)
 	config.Health.MaxRetries = getEnvAsInt("HEALTH_MAX_RETRIES", 5)
-	config.Health.Port = getEnvAsInt("HEALTH_PORT", 8080)
+	config.Health.Port = getEnvAsInt("HEALTH_PORT", 9876)
 
 	// Validate configuration
 	if err := validateConfig(&config); err != nil {
