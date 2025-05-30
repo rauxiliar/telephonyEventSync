@@ -6,12 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    deploy:
-      replicas: 1
-      update_config:
-        parallelism: 1
-        delay: 10s
-        order: start-first
+    network_mode: host
     environment:
       # Redis Local Configuration
       - REDIS_LOCAL_ADDR=${REDIS_LOCAL_ADDR:-localhost:6379}
@@ -55,15 +50,9 @@ services:
       - HEALTH_MAX_RETRIES=5
       - HEALTH_PORT=8080
 
-    networks:
-      - telephony-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
-
-networks:
-  telephony-network:
-    driver: bridge
