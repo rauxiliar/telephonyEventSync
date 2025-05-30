@@ -8,12 +8,26 @@ High-performance telephony event synchronization service between Redis instances
 
 ```mermaid
 graph TD
-    A[FreeSWITCH] -->|Publishes Events| B[Local Redis]
-    B -->|XReadGroup| C[Telephony Event Sync]
-    C -->|XAdd| D[Remote Redis]
-    C -->|XAck| B
-    E[Health Check] -->|Monitors| C
-    F[Cleanup Service] -.->|Removes Idle Consumers on Shutdown| B
+    subgraph External
+        A[FreeSWITCH]
+        B[Local Redis]
+        D[Remote Redis]
+    end
+
+    subgraph TelephonyEventSync
+        C[Reader Pool]
+        E[Writer Pool]
+        F[Monitoring & Management]
+    end
+
+    A -->|Publishes Events| B
+    B -->|XReadGroup| C
+    C -->|Process| E
+    E -->|XAdd| D
+    E -->|XAck| B
+    F -->|Monitors| C
+    F -->|Monitors| E
+    F -.->|Removes Consumers on Shutdown| B
 ```
 
 ### Processing Flow
