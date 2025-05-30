@@ -46,6 +46,9 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 	}
 
 	// Track successful messages and process them
+	var processedCount int64
+	var errorCount int64
+
 	for i, cmd := range cmds {
 		if cmd.Err() == nil {
 			msg := pendingMsgs[i]
@@ -70,22 +73,22 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			// ACK the message
 			if err := rLocal.XAck(ctx, msg.stream, config.Redis.Group, msg.id).Err(); err != nil {
 				log.Printf("[ERROR] Failed to acknowledge message %s: %v", msg.id, err)
-				metrics.Lock()
-				metrics.errors++
-				metrics.Unlock()
+				errorCount++
 			}
 
-			metrics.Lock()
-			metrics.messagesProcessed++
-			metrics.lastSyncTime = time.Now()
-			metrics.Unlock()
+			processedCount++
 		} else {
 			log.Printf("[ERROR] Failed to add message to stream: %v", cmd.Err())
-			metrics.Lock()
-			metrics.errors++
-			metrics.Unlock()
+			errorCount++
 		}
 	}
+
+	// Update metrics in batch
+	metrics.Lock()
+	metrics.messagesProcessed += processedCount
+	metrics.errors += errorCount
+	metrics.lastSyncTime = time.Now()
+	metrics.Unlock()
 }
 
 func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID int, config Config) {

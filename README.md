@@ -107,8 +107,8 @@ STREAM_JOBS=freeswitch:telephony:background-jobs # Background jobs stream
 ```env
 # Reader configuration
 READER_WORKERS=10                # Number of parallel reader workers
-READER_BATCH_SIZE=5000           # Number of messages to read at once
-READER_MAX_LATENCY=50ms          # Maximum acceptable read latency
+READER_BATCH_SIZE=1000           # Number of messages to read at once
+READER_MAX_LATENCY=300ms         # Maximum acceptable read latency
 READER_BLOCK_TIME=10ms           # Block time for XReadGroup operation
 
 # Buffer configuration
@@ -118,7 +118,7 @@ BUFFER_SIZE=100000               # Size of the channel buffer between reader and
 WRITER_WORKERS=10                # Number of parallel writer workers
 WRITER_PIPELINE_TIMEOUT=25ms     # Pipeline execution timeout
 WRITER_BATCH_SIZE=10             # Number of messages per pipeline
-WRITER_MAX_LATENCY=100ms         # Maximum acceptable write latency
+WRITER_MAX_LATENCY=300ms         # Maximum acceptable write latency
 TOTAL_MAX_LATENCY=1000ms         # Maximum acceptable total latency (from event to remote)
 ```
 
@@ -129,14 +129,6 @@ HEALTH_CHECK_INTERVAL=5s         # Interval between health checks
 HEALTH_RECOVERY_TIMEOUT=30s      # Timeout for recovery attempts
 HEALTH_MAX_RETRIES=5             # Maximum consecutive failures before unhealthy
 HEALTH_PORT=8080                 # Port for health check endpoint
-```
-
-### Logging Configuration
-
-```env
-LOG_LEVEL=info                   # Log level (debug, info, warn, error)
-LOG_FORMAT=json                  # Log format (json, text)
-LOG_OUTPUT=stdout                # Log output (stdout, file)
 ```
 
 ## Monitoring
@@ -168,8 +160,7 @@ Response:
     "status": "healthy",
     "last_sync": "2024-03-21T10:00:00Z",
     "queue_size": 0,
-    "read_latency": "1.2ms",
-    "write_latency": "2.3ms"
+    "errors": 0
 }
 ```
 
@@ -206,11 +197,13 @@ The service implements several optimizations:
    - Multiple writer workers
    - Non-blocking channel operations
    - Efficient resource utilization
+   - Optimized metrics updates
 
 3. **Memory Management**:
    - Pre-allocated buffers
-   - Object pooling
-   - Efficient string handling
+   - Efficient string to bytes conversion
+   - Reduced memory allocations
+   - Optimized map operations
 
 4. **Overload Protection**:
    - Buffered channels
@@ -223,25 +216,20 @@ The service implements several optimizations:
 
 ```bash
 # Build
-go build -o telephony-sync
+go build -o telephonyEventSync
 
 # Execution
-./telephony-sync
+./telephonyEventSync
 ```
 
 ### Docker
 
 ```bash
 # Build image
-docker build -t telephony-sync .
+docker compose build
 
 # Run container
-docker run -d \
-    --name telephony-sync \
-    -p 8080:8080 \
-    -e REDIS_LOCAL_ADDRESS=redis-local:6379 \
-    -e REDIS_REMOTE_ADDRESS=redis-remote:6379 \
-    telephony-sync
+docker compose up -d
 ```
 
 ## Troubleshooting

@@ -55,11 +55,6 @@ services:
       - HEALTH_MAX_RETRIES=5
       - HEALTH_PORT=8080
 
-      # Logging Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_OUTPUT=${LOG_OUTPUT:-stdout}
-
     networks:
       - telephony-network
     healthcheck:

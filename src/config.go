@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-var consumerCounter uint64
-
 type Config struct {
 	Redis struct {
 		Local struct {
@@ -56,11 +54,6 @@ type Config struct {
 		RecoveryTimeout time.Duration
 		MaxRetries      int
 		Port            int
-	}
-	Logging struct {
-		Level  string
-		Format string
-		Output string
 	}
 }
 
@@ -166,11 +159,6 @@ func getConfig() Config {
 	config.Health.RecoveryTimeout = getEnvAsDuration("HEALTH_RECOVERY_TIMEOUT", 30*time.Second)
 	config.Health.MaxRetries = getEnvAsInt("HEALTH_MAX_RETRIES", 5)
 	config.Health.Port = getEnvAsInt("HEALTH_PORT", 8080)
-
-	// Logging
-	config.Logging.Level = getEnv("LOG_LEVEL", "info")
-	config.Logging.Format = getEnv("LOG_FORMAT", "json")
-	config.Logging.Output = getEnv("LOG_OUTPUT", "stdout")
 
 	// Validate configuration
 	if err := validateConfig(&config); err != nil {

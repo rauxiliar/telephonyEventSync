@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"log"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,11 +23,22 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 		streams[i+len(config.Streams)] = ">"
 	}
 
+	// Batch metrics update
+	metricsUpdateTicker := time.NewTicker(1 * time.Second)
+	defer metricsUpdateTicker.Stop()
+
+	// Pre-allocate timestamp key for faster string operations
+	timestampKey := []byte("\"Event-Date-Timestamp\":\"")
+
 	for {
 		select {
 		case <-stopChan:
 			log.Printf("[INFO] Stopping reader %d after cleanup", id)
 			return
+		case <-metricsUpdateTicker.C:
+			metrics.Lock()
+			metrics.queueSize = len(ch)
+			metrics.Unlock()
 		default:
 			res, err := rLocal.XReadGroup(ctx, &redis.XReadGroupArgs{
 				Group:    config.Redis.Group,
@@ -43,26 +54,20 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 					continue
 				}
 				log.Printf("[ERROR] Reader %d error: %v", id, err)
-				time.Sleep(50 * time.Millisecond)
 				continue
 			}
-
-			metrics.Lock()
-			metrics.queueSize = len(ch)
-			metrics.Unlock()
 
 			for _, streamRes := range res {
 				for _, msg := range streamRes.Messages {
 					eventStr, _ := msg.Values["event"].(string)
-					values := map[string]string{"event": eventStr}
 
 					// Extract event timestamp if available
 					var eventTimestamp int64
-					if eventStr, ok := values["event"]; ok {
-						timestampKey := "\"Event-Date-Timestamp\":\""
-						if idx := strings.Index(eventStr, timestampKey); idx != -1 {
+					if eventStr != "" {
+						// Use bytes.Index for faster string search
+						if idx := bytes.Index([]byte(eventStr), timestampKey); idx != -1 {
 							start := idx + len(timestampKey)
-							end := strings.Index(eventStr[start:], "\"")
+							end := bytes.Index([]byte(eventStr[start:]), []byte("\""))
 							if end != -1 {
 								timestampStr := eventStr[start : start+end]
 								timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
@@ -83,7 +88,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 					case ch <- message{
 						stream:         streamRes.Stream,
 						id:             msg.ID,
-						values:         values,
+						values:         map[string]string{"event": eventStr},
 						readTime:       time.Now(),
 						eventTimestamp: eventTimestamp,
 					}:
