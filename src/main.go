@@ -73,10 +73,15 @@ func printMetrics() {
 }
 
 func main() {
-	// Create root context with cancellation
+	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Initialize logger
+	initLogger()
+	defer globalLogger.Shutdown()
+
+	// Load configuration
 	config := getConfig()
 
 	// Initialize health monitor
@@ -100,19 +105,21 @@ func main() {
 		MinIdleConns: config.Redis.Remote.MinIdleConns,
 		MaxRetries:   config.Redis.Remote.MaxRetries,
 	})
-
 	// Verify connections
 	if err := rLocal.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Error connecting to local Redis: %v", err)
+		LogError("Error connecting to local Redis: %v", err)
+		os.Exit(1)
 	}
 	if err := rRemote.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Error connecting to remote Redis: %v", err)
+		LogError("Error connecting to remote Redis: %v", err)
+		os.Exit(1)
 	}
 
 	// Create groups in local streams
 	for _, stream := range config.Streams {
 		if err := createGroup(ctx, rLocal, stream, config.Redis.Group); err != nil {
-			log.Fatalf("Error creating group in stream %s: %v", stream, err)
+			LogError("Error creating group in stream %s: %v", stream, err)
+			os.Exit(1)
 		}
 	}
 
@@ -126,6 +133,7 @@ func main() {
 	// Channel for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	// Start multiple readers and multiple writers
 	wg.Add(1 + config.Processing.ReaderWorkers)
 	for i := range config.Processing.ReaderWorkers {
@@ -147,7 +155,7 @@ func main() {
 
 	// Wait for interrupt signal
 	<-sigChan
-	log.Println("Starting graceful shutdown...")
+	LogInfo("Starting graceful shutdown...")
 
 	// Stop health monitor
 	healthMonitor.Stop()
@@ -171,5 +179,5 @@ func main() {
 	rLocal.Close()
 	rRemote.Close()
 
-	log.Println("Shutdown complete")
+	LogInfo("Shutdown complete")
 }

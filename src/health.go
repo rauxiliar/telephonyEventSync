@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -101,12 +100,12 @@ func (hm *HealthMonitor) checkHealth() {
 		hm.status.isHealthy = false
 		hm.status.recoveryAttempts++
 
-		log.Printf("[ERROR] Unhealthy state detected: %v", hm.status.lastError)
+		LogError("Unhealthy state detected: %v", hm.status.lastError)
 
 		if hm.status.recoveryAttempts <= hm.maxRetries {
 			go hm.attemptRecovery()
 		} else {
-			log.Printf("[ERROR] Max recovery attempts reached. Manual intervention required.")
+			LogError("Max recovery attempts reached. Manual intervention required.")
 		}
 		return
 	}
@@ -124,14 +123,14 @@ func (hm *HealthMonitor) checkRedisConnections() bool {
 	// Check local Redis
 	localAddr := hm.config.Redis.Local.Address
 	if err := hm.localClient.Ping(ctx).Err(); err != nil {
-		log.Printf("[ERROR] Local Redis connection failed (%s): %v", localAddr, err)
+		LogError("Local Redis connection failed (%s): %v", localAddr, err)
 		return false
 	}
 
 	// Check remote Redis
 	remoteAddr := hm.config.Redis.Remote.Address
 	if err := hm.remoteClient.Ping(ctx).Err(); err != nil {
-		log.Printf("[ERROR] Remote Redis connection failed (%s): %v", remoteAddr, err)
+		LogError("Remote Redis connection failed (%s): %v", remoteAddr, err)
 		return false
 	}
 
@@ -139,7 +138,7 @@ func (hm *HealthMonitor) checkRedisConnections() bool {
 }
 
 func (hm *HealthMonitor) attemptRecovery() {
-	log.Printf("[INFO] Starting recovery attempt %d", hm.status.recoveryAttempts)
+	LogInfo("Starting recovery attempt %d", hm.status.recoveryAttempts)
 
 	// Create new Redis clients
 	newLocal := redis.NewClient(&redis.Options{
@@ -162,12 +161,12 @@ func (hm *HealthMonitor) attemptRecovery() {
 
 	// Test new connections
 	if err := newLocal.Ping(hm.ctx).Err(); err != nil {
-		log.Printf("[ERROR] Failed to establish new local Redis connection: %v", err)
+		LogError("Failed to establish new local Redis connection: %v", err)
 		return
 	}
 
 	if err := newRemote.Ping(hm.ctx).Err(); err != nil {
-		log.Printf("[ERROR] Failed to establish new remote Redis connection: %v", err)
+		LogError("Failed to establish new remote Redis connection: %v", err)
 		return
 	}
 
@@ -182,7 +181,7 @@ func (hm *HealthMonitor) attemptRecovery() {
 	oldLocal.Close()
 	oldRemote.Close()
 
-	log.Printf("[INFO] Successfully reconnected to Redis instances")
+	LogInfo("Successfully reconnected to Redis instances")
 }
 
 func (hm *HealthMonitor) IsHealthy() bool {

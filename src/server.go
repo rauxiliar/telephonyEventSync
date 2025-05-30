@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -42,7 +42,9 @@ func startHealthServer() {
 	})
 
 	// Start server
-	if err := router.Run(":8080"); err != nil {
-		log.Printf("[ERROR] Failed to start health check server: %v", err)
+	addr := ":" + fmt.Sprintf("%d", healthMonitor.config.Health.Port)
+	LogInfo("Starting health check server on %s", addr)
+	if err := router.Run(addr); err != nil {
+		LogError("Failed to start health check server: %v", err)
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -162,7 +161,8 @@ func getConfig() Config {
 
 	// Validate configuration
 	if err := validateConfig(&config); err != nil {
-		log.Fatalf("Invalid configuration: %v", err)
+		LogError("Invalid configuration: %v", err)
+		os.Exit(1)
 	}
 
 	return config

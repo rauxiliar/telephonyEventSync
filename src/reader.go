@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -33,7 +32,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 	for {
 		select {
 		case <-stopChan:
-			log.Printf("[INFO] Stopping reader %d after cleanup", id)
+			LogInfo("Stopping reader %d after cleanup", id)
 			return
 		case <-metricsUpdateTicker.C:
 			metrics.Lock()
@@ -53,7 +52,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 				if err == redis.Nil {
 					continue
 				}
-				log.Printf("[ERROR] Reader %d error: %v", id, err)
+				LogError("Reader %d error: %v", id, err)
 				continue
 			}
 
@@ -77,7 +76,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 									eventTime := time.Unix(0, eventTimestamp)
 									readerLatency := readTime.Sub(eventTime)
 									if readerLatency > config.Processing.ReaderMaxLatency {
-										log.Printf("[WARN] High reader latency since event trigger detected for message %s: %v", msg.ID, readerLatency)
+										LogWarn("High reader latency since event trigger detected for message %s: %v", msg.ID, readerLatency)
 									}
 								}
 							}
@@ -95,7 +94,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 					case <-stopChan:
 						return
 					default:
-						log.Printf("[WARN] Buffer full, message discarded: %s", msg.ID)
+						LogWarn("Buffer full, message discarded: %s", msg.ID)
 					}
 				}
 			}

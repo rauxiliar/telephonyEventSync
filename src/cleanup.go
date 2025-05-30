@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -31,7 +30,7 @@ func (cc *ConsumerCleanup) Start() {
 	// Register cleanup function to be called in case of panic
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[ERROR] Recovered from panic: %v", r)
+			LogError("Recovered from panic: %v", r)
 			cc.Stop()
 			panic(r) // Re-throw panic after cleanup
 		}
@@ -50,7 +49,7 @@ func (cc *ConsumerCleanup) processPendingMessages(ctx context.Context, stream st
 		}).Result()
 
 		if err != nil {
-			log.Printf("[ERROR] Error getting pending messages: %v", err)
+			LogError("Error getting pending messages: %v", err)
 			return
 		}
 
@@ -58,7 +57,7 @@ func (cc *ConsumerCleanup) processPendingMessages(ctx context.Context, stream st
 			return // No more pending messages
 		}
 
-		log.Printf("[INFO] Processing batch of %d pending messages in stream %s", len(pendingMsgs), stream)
+		LogInfo("Processing batch of %d pending messages in stream %s", len(pendingMsgs), stream)
 
 		// Claim and ack all messages in this batch
 		for _, msg := range pendingMsgs {
@@ -72,7 +71,7 @@ func (cc *ConsumerCleanup) processPendingMessages(ctx context.Context, stream st
 			}).Result()
 
 			if err != nil {
-				log.Printf("[ERROR] Error claiming message %s: %v", msg.ID, err)
+				LogError("Error claiming message %s: %v", msg.ID, err)
 				continue
 			}
 
@@ -80,9 +79,9 @@ func (cc *ConsumerCleanup) processPendingMessages(ctx context.Context, stream st
 			for _, claimedMsg := range claimedMsgs {
 				err = cc.client.XAck(ctx, stream, cc.group, claimedMsg.ID).Err()
 				if err != nil {
-					log.Printf("[ERROR] Error acknowledging message %s: %v", claimedMsg.ID, err)
+					LogError("Error acknowledging message %s: %v", claimedMsg.ID, err)
 				} else {
-					log.Printf("[INFO] Successfully acknowledged message %s", claimedMsg.ID)
+					LogInfo("Successfully acknowledged message %s", claimedMsg.ID)
 				}
 			}
 		}
@@ -90,7 +89,7 @@ func (cc *ConsumerCleanup) processPendingMessages(ctx context.Context, stream st
 }
 
 func (cc *ConsumerCleanup) Stop() {
-	log.Printf("[INFO] Stopping cleanup mechanism")
+	LogInfo("Stopping cleanup mechanism")
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -106,12 +105,12 @@ func (cc *ConsumerCleanup) Stop() {
 			consumerName := fmt.Sprintf("%s_%d", cc.consumer, i)
 			err := cc.client.XGroupDelConsumer(ctx, stream, cc.group, consumerName).Err()
 			if err != nil {
-				log.Printf("[ERROR] Error removing consumer %s from group %s in stream %s: %v", consumerName, cc.group, stream, err)
+				LogError("Error removing consumer %s from group %s in stream %s: %v", consumerName, cc.group, stream, err)
 				continue
 			}
-			log.Printf("[INFO] Successfully removed consumer %s from group %s in stream %s", consumerName, cc.group, stream)
+			LogInfo("Successfully removed consumer %s from group %s in stream %s", consumerName, cc.group, stream)
 		}
 	}
 
-	log.Printf("[INFO] Cleanup completed")
+	LogInfo("Cleanup completed")
 }
