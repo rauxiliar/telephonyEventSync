@@ -28,7 +28,7 @@ func startLatencyChecker(config Config) {
 			totalLatency := now.Sub(eventTime)
 
 			if totalLatency > config.Processing.TotalMaxLatency {
-				log.Printf("[WARNING] High total latency detected since event trigger until writer processing for message %s: %v", check.id, totalLatency)
+				log.Printf("[WARN] High total latency detected since event trigger until writer processing for message %s: %v", check.id, totalLatency)
 			}
 		}
 	}()
@@ -38,7 +38,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 	// Execute pipeline
 	cmds, err := pipe.Exec(ctx)
 	if err != nil {
-		log.Printf("[WRITER ERROR - PIPELINE] Worker %d: %v\n", workerID, err)
+		log.Printf("[ERROR] Pipeline execution failed for worker %d: %v", workerID, err)
 		metrics.Lock()
 		metrics.errors++
 		metrics.Unlock()
@@ -54,7 +54,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			writerTime := time.Now()
 			writerLatency := writerTime.Sub(msg.readTime)
 			if writerLatency > config.Processing.WriterMaxLatency {
-				log.Printf("[WARNING] High writer latency after reader processing detected for message %s: %v", msg.id, writerLatency)
+				log.Printf("[WARN] High writer latency after reader processing detected for message %s: %v", msg.id, writerLatency)
 			}
 
 			// Send to latency channel
@@ -64,12 +64,12 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 				timestamp: msg.eventTimestamp,
 			}:
 			default:
-				log.Printf("[WARNING] Latency channel full, message %s discarded", msg.id)
+				log.Printf("[WARN] Latency channel full, message %s discarded", msg.id)
 			}
 
 			// ACK the message
 			if err := rLocal.XAck(ctx, msg.stream, config.Redis.Group, msg.id).Err(); err != nil {
-				log.Printf("[WRITER ERROR - XACK] Worker %d: %v\n", workerID, err)
+				log.Printf("[ERROR] Failed to acknowledge message %s: %v", msg.id, err)
 				metrics.Lock()
 				metrics.errors++
 				metrics.Unlock()
@@ -80,7 +80,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			metrics.lastSyncTime = time.Now()
 			metrics.Unlock()
 		} else {
-			log.Printf("[WRITER ERROR - XADD] Worker %d: %v\n", workerID, cmd.Err())
+			log.Printf("[ERROR] Failed to add message to stream: %v", cmd.Err())
 			metrics.Lock()
 			metrics.errors++
 			metrics.Unlock()

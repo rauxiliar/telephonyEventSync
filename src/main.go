@@ -117,7 +117,7 @@ func main() {
 	}
 
 	// Initialize cleanup mechanism
-	cleanup := NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, config.Streams)
+	cleanup := NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, config.Streams, config.Processing.ReaderWorkers)
 	cleanup.Start()
 
 	ch := make(chan message, config.Processing.BufferSize)

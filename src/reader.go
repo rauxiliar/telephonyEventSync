@@ -26,7 +26,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 	for {
 		select {
 		case <-stopChan:
-			log.Printf("[READER %d] Stopping reader after cleanup", id)
+			log.Printf("[INFO] Stopping reader %d after cleanup", id)
 			return
 		default:
 			res, err := rLocal.XReadGroup(ctx, &redis.XReadGroupArgs{
@@ -42,7 +42,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 				if err == redis.Nil {
 					continue
 				}
-				log.Printf("[READER %d] Error: %v\n", id, err)
+				log.Printf("[ERROR] Reader %d error: %v", id, err)
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
@@ -72,7 +72,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 									eventTime := time.Unix(0, eventTimestamp)
 									readerLatency := readTime.Sub(eventTime)
 									if readerLatency > config.Processing.ReaderMaxLatency {
-										log.Printf("[READER %d] High reader latency since event trigger detected for message %s: %v", id, msg.ID, readerLatency)
+										log.Printf("[WARN] High reader latency since event trigger detected for message %s: %v", msg.ID, readerLatency)
 									}
 								}
 							}
@@ -90,7 +90,7 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 					case <-stopChan:
 						return
 					default:
-						log.Printf("[READER %d] Buffer full, message discarded: %s", id, msg.ID)
+						log.Printf("[WARN] Buffer full, message discarded: %s", msg.ID)
 					}
 				}
 			}

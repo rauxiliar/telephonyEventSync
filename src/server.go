@@ -43,6 +43,6 @@ func startHealthServer() {
 
 	// Start server
 	if err := router.Run(":8080"); err != nil {
-		log.Printf("Failed to start health check server: %v", err)
+		log.Printf("[ERROR] Failed to start health check server: %v", err)
 	}
 }
