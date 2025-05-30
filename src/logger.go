@@ -36,7 +36,7 @@ func initLogger() *AsyncLogger {
 			}
 		}
 
-		logLevel := LogLevelWarn
+		logLevel := LogLevelInfo
 		if level := os.Getenv("LOG_LEVEL"); level != "" {
 			switch level {
 			case "error":

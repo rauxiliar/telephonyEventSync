@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -47,10 +46,10 @@ func createGroup(ctx context.Context, client *redis.Client, stream string, group
 	// Try to create the group, if it exists, that's fine
 	err := client.XGroupCreateMkStream(ctx, stream, groupName, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		log.Printf("[ERROR] Failed to create group %s in stream %s: %v", groupName, stream, err)
+		LogError("Failed to create group %s in stream %s: %v", groupName, stream, err)
 		return err
 	}
-	log.Printf("[INFO] Group %s created/verified in stream %s", groupName, stream)
+	LogInfo("Group %s created/verified in stream %s", groupName, stream)
 	return nil
 }
 
@@ -60,7 +59,7 @@ func printMetrics() {
 
 	for range ticker.C {
 		metrics.Lock()
-		log.Printf("[METRICS] Messages processed (last 5s): %d, Errors: %d, Queue size: %d, Last sync: %v\n",
+		LogInfo("Messages processed (last 5s): %d, Errors: %d, Queue size: %d, Last sync: %v",
 			metrics.messagesProcessed,
 			metrics.errors,
 			metrics.queueSize,
