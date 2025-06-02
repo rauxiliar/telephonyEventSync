@@ -9,20 +9,20 @@ import (
 	"time"
 )
 
-func unixSocketReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, config Config) {
+func tcpReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, config Config) {
 	defer wg.Done()
 
-	// Connect to Unix socket
+	// Connect to TCP loopback
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "unix", config.UnixSocket.Path)
+	conn, err := d.DialContext(ctx, "tcp", config.TCP.Address)
 	if err != nil {
-		LogError("Error connecting to Unix socket: %v", err)
+		LogError("Error connecting to TCP loopback: %v", err)
 		return
 	}
 	defer conn.Close()
 
 	// Buffer for reading
-	buffer := make([]byte, config.UnixSocket.BufferSize)
+	buffer := make([]byte, config.TCP.BufferSize)
 
 	// Batch metrics update
 	metricsUpdateTicker := time.NewTicker(1 * time.Second)
@@ -34,7 +34,7 @@ func unixSocketReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 	for {
 		select {
 		case <-stopChan:
-			LogInfo("Stopping unix socket reader %d after cleanup", id)
+			LogInfo("Stopping TCP reader %d after cleanup", id)
 			return
 		case <-metricsUpdateTicker.C:
 			metrics.Lock()
@@ -44,12 +44,12 @@ func unixSocketReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 			// Read data from socket
 			n, err := conn.Read(buffer)
 			if err != nil {
-				LogError("Error reading from Unix socket: %v", err)
+				LogError("Error reading from TCP: %v", err)
 				// Try to reconnect after a brief delay
 				time.Sleep(time.Second)
-				conn, err = d.DialContext(ctx, "unix", config.UnixSocket.Path)
+				conn, err = d.DialContext(ctx, "tcp", config.TCP.Address)
 				if err != nil {
-					LogError("Error reconnecting to Unix socket: %v", err)
+					LogError("Error reconnecting to TCP: %v", err)
 					continue
 				}
 				continue
@@ -75,7 +75,7 @@ func unixSocketReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 								eventTime := time.Unix(0, eventTimestamp)
 								readerLatency := readTime.Sub(eventTime)
 								if readerLatency > config.Processing.ReaderMaxLatency {
-									LogWarn("High reader (unix socket) latency since event trigger detected: %v", readerLatency)
+									LogWarn("High reader (TCP) latency since event trigger detected: %v", readerLatency)
 								}
 							}
 						}
@@ -85,7 +85,7 @@ func unixSocketReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 				// Create message with the same format as Redis reader
 				select {
 				case ch <- message{
-					stream:         "unix_socket",
+					stream:         "tcp_socket",
 					id:             time.Now().String(), // Use timestamp as ID
 					values:         map[string]string{"event": eventStr},
 					readTime:       time.Now(),
@@ -94,7 +94,7 @@ func unixSocketReader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 				case <-stopChan:
 					return
 				default:
-					LogWarn("Buffer full, message discarded from Unix socket")
+					LogWarn("Buffer full, message discarded from TCP")
 				}
 			}
 		}
