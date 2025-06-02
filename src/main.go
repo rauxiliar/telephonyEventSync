@@ -135,11 +135,21 @@ func main() {
 
 	// Start multiple readers and multiple writers
 	wg.Add(1 + config.Processing.ReaderWorkers)
-	for i := range config.Processing.ReaderWorkers {
-		configCopy := config
-		configCopy.Redis.Consumer = fmt.Sprintf("%s_%d", config.Redis.Consumer, i)
-		go reader(ctx, ch, &wg, i, configCopy)
+
+	switch config.Reader.Type {
+	case "redis":
+		for i := range config.Processing.ReaderWorkers {
+			configCopy := config
+			configCopy.Redis.Consumer = fmt.Sprintf("%s_%d", config.Redis.Consumer, i)
+			go reader(ctx, ch, &wg, i, configCopy)
+		}
+	case "unix_socket":
+		go unixSocketReader(ctx, ch, &wg, 0, config)
+	default:
+		LogError("Tipo de reader inválido: %s. Use 'redis' ou 'unix_socket'", config.Reader.Type)
+		os.Exit(1)
 	}
+
 	wg.Add(1 + config.Processing.WriterWorkers)
 	for i := range config.Processing.WriterWorkers {
 		go writer(ctx, ch, &wg, i, config)
