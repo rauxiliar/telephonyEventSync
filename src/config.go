@@ -10,7 +10,7 @@ import (
 type StreamConfig struct {
 	Name       string
 	MaxLen     int64
-	ExpireTime int64
+	ExpireTime time.Duration
 }
 
 type Config struct {
@@ -62,6 +62,9 @@ type Config struct {
 
 		// New total max latency configuration
 		TotalMaxLatency time.Duration
+
+		// Trim interval
+		TrimInterval time.Duration
 	}
 	Health struct {
 		CheckInterval   time.Duration
@@ -157,12 +160,12 @@ func getConfig() Config {
 	config.Streams.Events = StreamConfig{
 		Name:       getEnv("STREAM_EVENTS", "freeswitch:telephony:events"),
 		MaxLen:     getEnvAsInt64("EVENTS_MAX_LEN", 10000),
-		ExpireTime: getEnvAsInt64("EVENTS_EXPIRE_TIME", 600), // 10 minutes
+		ExpireTime: getEnvAsDuration("EVENTS_EXPIRE_TIME", 600*time.Second), // 10 minutes
 	}
 	config.Streams.Jobs = StreamConfig{
 		Name:       getEnv("STREAM_JOBS", "freeswitch:telephony:background-jobs"),
 		MaxLen:     getEnvAsInt64("JOBS_MAX_LEN", 10000),
-		ExpireTime: getEnvAsInt64("JOBS_EXPIRE_TIME", 60), // 1 minute
+		ExpireTime: getEnvAsDuration("JOBS_EXPIRE_TIME", 60*time.Second), // 1 minute
 	}
 
 	// Processing - Reader
@@ -182,6 +185,9 @@ func getConfig() Config {
 
 	// Processing - Total Max Latency
 	config.Processing.TotalMaxLatency = getEnvAsDuration("TOTAL_MAX_LATENCY", 1000*time.Millisecond)
+
+	// Processing - Trim Interval
+	config.Processing.TrimInterval = getEnvAsDuration("TRIM_INTERVAL", 10*time.Second)
 
 	// Health
 	config.Health.CheckInterval = getEnvAsDuration("HEALTH_CHECK_INTERVAL", 5*time.Second)

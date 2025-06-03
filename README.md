@@ -2,35 +2,51 @@
 
 High-performance telephony event synchronization service between Redis instances, optimized for low latency and high throughput.
 
-## Architecture
+## Reading Alternatives
 
-### System Overview
+The service supports two different ways to receive events from FreeSWITCH:
+
+### 1. Unix Socket (Recommended for Low Latency)
+
+In this mode, FreeSWITCH writes events directly to a Unix socket, which are then read by the service. This provides the lowest possible latency as it eliminates the Redis local step.
 
 ```mermaid
-graph TD
-    subgraph External
-        A[FreeSWITCH]
-        B[Local Redis]
-        D[Remote Redis]
-    end
+sequenceDiagram
+    participant FS as FreeSWITCH
+    participant TES as Telephony Event Sync
+    participant RR as Remote Redis
 
-    subgraph TelephonyEventSync
-        C[Reader Pool]
-        E[Writer Pool]
-        F[Monitoring & Management]
-    end
-
-    A -->|Publishes Events| B
-    B -->|XReadGroup| C
-    C -->|Process| E
-    E -->|XAdd| D
-    E -->|XAck| B
-    F -->|Monitors| C
-    F -->|Monitors| E
-    F -.->|Removes Consumers on Shutdown| B
+    FS->>TES: Unix Socket Event
+    TES->>TES: Process Event
+    TES->>RR: XADD Pipeline
 ```
 
-### Processing Flow
+Required configuration:
+
+```env
+READER_TYPE=unix
+UNIX_SOCKET_PATH=/var/run/telephony/telephony.sock
+```
+
+FreeSWITCH configuration (in `lua.conf.xml`):
+
+```xml
+<!-- GO CONTACT EVENTS -->
+<hook event="BACKGROUND_JOB" script="send-events.lua"/>
+<hook event="CHANNEL_EXECUTE" script="send-events.lua"/>
+<hook event="CHANNEL_EXECUTE_COMPLETE" script="send-events.lua"/>
+<hook event="CHANNEL_ANSWER" script="send-events.lua"/>
+<hook event="CHANNEL_HANGUP" script="send-events.lua"/>
+<hook event="DTMF" script="send-events.lua"/>
+<hook event="DETECTED_SPEECH" script="send-events.lua"/>
+<hook event="CUSTOM" subclass="fscontact::inbound" script="send-events.lua"/>
+<hook event="CUSTOM" subclass="fscloud-tone-detection" script="send-events.lua"/>
+<!-- GO CONTACT EVENTS -->
+```
+
+### 2. Redis Local
+
+In this mode, FreeSWITCH writes events to a local Redis instance, which are then read by the service using Redis Streams.
 
 ```mermaid
 sequenceDiagram
@@ -44,6 +60,78 @@ sequenceDiagram
     TES->>TES: Process Batch
     TES->>RR: XADD Pipeline
     TES->>LR: XAck
+```
+
+Required configuration:
+
+```env
+READER_TYPE=redis
+REDIS_LOCAL_ADDR=localhost:6379
+REDIS_LOCAL_DB=2
+REDIS_GROUP=sync_group
+REDIS_CONSUMER=sync_worker
+```
+
+## Architecture
+
+### System Overview
+
+```mermaid
+flowchart LR
+    subgraph External System
+        FS[FreeSWITCH]
+        LR[Local Redis]
+        RR[Remote Redis]
+    end
+
+    subgraph TelephonyEventSync
+        subgraph Readers
+            USR[Unix Socket Reader]
+            RDR[Redis Reader]
+        end
+        WRT[Writer]
+        MM[Monitoring & Management]
+    end
+
+    %% Main flow
+    FS -- "Publishes Events" --> LR
+    LR -- "XReadGroup" --> RDR
+    RDR -- "Process" --> WRT
+    WRT -- "XAdd" --> RR
+    WRT -- "XAck" --> LR
+
+    %% Alternative: Direct Unix Socket
+    FS -- "Unix Socket" --> USR
+    USR -- "Process" --> WRT
+
+    %% Monitoring
+    MM -- "Monitors" --> USR
+    MM -- "Monitors" --> RDR
+    MM -- "Monitors" --> WRT
+    MM -- "Removes Consumers on Shutdown" --> LR
+```
+
+### Processing Flow
+
+```mermaid
+sequenceDiagram
+    participant FS as FreeSWITCH
+    participant LR as Local Redis
+    participant TES as Telephony Event Sync
+    participant RR as Remote Redis
+
+    Note over FS,TES: Option 1: Unix Socket
+    FS->>TES: Unix Socket Event
+    TES->>TES: Process Event
+    TES->>RR: XADD Pipeline
+
+    Note over FS,LR: Option 2: Redis
+    FS->>LR: XADD Event
+    LR->>TES: XReadGroup
+    TES->>TES: Process Batch
+    TES->>RR: XADD Pipeline
+    TES->>LR: XAck
+
     Note over TES: Monitor Latency
 ```
 
@@ -51,7 +139,7 @@ sequenceDiagram
 
 ```mermaid
 graph TD
-    A[Reader] -->|Channel| B[Writer Pool]
+    A[Reader/Unix Socket] -->|Channel| B[Writer Pool]
     B -->|Pipeline| C[Remote Redis]
     D[Health Monitor] -->|Checks| A
     D -->|Checks| B
@@ -62,6 +150,7 @@ graph TD
 ## Features
 
 - Real-time FreeSWITCH event synchronization between Redis instances
+- Support for both Redis and Unix Socket event sources
 - Low-latency event processing with batch optimization
 - Parallel processing with multiple writer workers
 - Comprehensive latency monitoring
@@ -69,6 +158,7 @@ graph TD
 - Health checks and metrics
 - Graceful shutdown
 - Protection against overload
+- Automatic stream trimming
 
 ## Requirements
 
@@ -80,7 +170,17 @@ graph TD
 
 The service is configured through environment variables:
 
-### Redis Local Configuration
+### Reader Configuration
+
+```env
+# Choose between "redis" or "unix" (default: "redis")
+READER_TYPE=redis
+
+# Unix Socket configuration (only used when READER_TYPE=unix)
+UNIX_SOCKET_PATH=/var/run/telephony/telephony.sock  # Unix socket path
+```
+
+### Redis Local Configuration (only used when READER_TYPE=redis)
 
 ```env
 REDIS_LOCAL_ADDR=localhost:6379    # Local Redis address
@@ -102,7 +202,7 @@ REDIS_REMOTE_MIN_IDLE_CONNS=10    # Minimum idle connections in pool
 REDIS_REMOTE_MAX_RETRIES=3        # Maximum retries for failed operations
 ```
 
-### Redis Consumer Group Configuration
+### Redis Consumer Group Configuration (only used when READER_TYPE=redis)
 
 ```env
 REDIS_GROUP=sync_group            # Redis consumer group name
@@ -112,8 +212,16 @@ REDIS_CONSUMER=sync_worker        # Base consumer name (will be appended with ho
 ### Stream Configuration
 
 ```env
+# Stream names
 STREAM_EVENTS=freeswitch:telephony:events        # Main events stream
 STREAM_JOBS=freeswitch:telephony:background-jobs # Background jobs stream
+
+# Stream settings
+EVENTS_MAX_LEN=10000              # Maximum length of events stream
+JOBS_MAX_LEN=10000               # Maximum length of jobs stream
+EVENTS_EXPIRE_TIME=10m           # Events expiration time
+JOBS_EXPIRE_TIME=1m             # Jobs expiration time
+TRIM_INTERVAL=10s               # Interval for stream trimming
 ```
 
 ### Processing Configuration
@@ -189,17 +297,6 @@ Response:
 
 ## Performance Optimizations
 
-### Latency Optimization
-
-```mermaid
-graph LR
-    A[Event] -->|1. FreeSWITCH| B[Local Redis]
-    B -->|2. Reader| C[Channel]
-    C -->|3. Writer Pool| D[Remote Redis]
-    E[Latency Monitor] -->|Tracks| A
-    E -->|Tracks| D
-```
-
 The service implements several optimizations:
 
 1. **Batch Processing**:
@@ -223,6 +320,11 @@ The service implements several optimizations:
    - Buffered channels
    - Non-blocking operations
    - Configurable timeouts
+
+5. **Stream Management**:
+   - Automatic stream trimming
+   - Configurable max lengths
+   - Configurable expiration times
 
 ## Build and Execution
 
@@ -267,6 +369,7 @@ docker compose up -d
    - Monitor queue size
    - Adjust worker count
    - Verify consumer group status
+   - Check stream trimming settings
 
 ### Monitoring Tools
 
@@ -278,6 +381,9 @@ docker compose up -d
 
    # Check pending messages
    XPENDING <stream> <group>
+
+   # Check stream length
+   XLEN <stream>
    ```
 
 2. **Metrics**:

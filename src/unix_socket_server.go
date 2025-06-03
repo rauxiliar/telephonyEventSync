@@ -29,7 +29,7 @@ var eventsToPush = map[string]bool{
 	"CUSTOM":         true,
 }
 
-func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, config Config) {
+func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
 	// Get socket path from config or use default

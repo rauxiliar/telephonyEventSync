@@ -72,7 +72,7 @@ func printMetrics() {
 }
 
 func trimStreams(ctx context.Context, config Config) {
-	ticker := time.NewTicker(30 * time.Second) // each 30 seconds
+	ticker := time.NewTicker(config.Processing.TrimInterval)
 	defer ticker.Stop()
 
 	for {
@@ -185,7 +185,7 @@ func main() {
 			go reader(ctx, ch, &wg, i, configCopy)
 		}
 	case "unix":
-		go unixSocketServer(ctx, ch, &wg, 0, config)
+		go unixSocketServer(ctx, ch, &wg, config)
 	default:
 		LogError("Invalid reader type: %s. Use 'redis' or 'unix'", config.Reader.Type)
 		os.Exit(1)
