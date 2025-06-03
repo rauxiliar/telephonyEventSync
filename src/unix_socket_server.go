@@ -129,6 +129,14 @@ func handleUnixConnection(conn net.Conn, ch chan<- message, config Config) {
 			}
 		}
 
+		// Check reader latency
+		readTime := time.Now()
+		eventTime := time.Unix(0, eventTimestamp)
+		readerLatency := readTime.Sub(eventTime)
+		if readerLatency > config.Processing.ReaderMaxLatency {
+			LogWarn("High reader latency since event trigger detected for Unix socket message: %v", readerLatency)
+		}
+
 		// Determine stream based on event type
 		var stream string
 		if eventsToPublish[eventType] {
