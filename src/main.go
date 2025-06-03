@@ -115,7 +115,8 @@ func main() {
 	}
 
 	// Create groups in local streams
-	for _, stream := range config.Streams {
+	streams := []string{config.Streams.Events, config.Streams.Jobs}
+	for _, stream := range streams {
 		if err := createGroup(ctx, rLocal, stream, config.Redis.Group); err != nil {
 			LogError("Error creating group in stream %s: %v", stream, err)
 			os.Exit(1)
@@ -123,7 +124,7 @@ func main() {
 	}
 
 	// Initialize cleanup mechanism
-	cleanup := NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, config.Streams, config.Processing.ReaderWorkers)
+	cleanup := NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, streams, config.Processing.ReaderWorkers)
 	cleanup.Start()
 
 	ch := make(chan message, config.Processing.BufferSize)
