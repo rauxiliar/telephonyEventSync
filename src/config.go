@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+type StreamConfig struct {
+	Name       string
+	MaxLen     int64
+	ExpireTime int64
+}
+
 type Config struct {
 	Redis struct {
 		Local struct {
@@ -35,8 +41,8 @@ type Config struct {
 		SocketPath string
 	}
 	Streams struct {
-		Events string
-		Jobs   string
+		Events StreamConfig
+		Jobs   StreamConfig
 	}
 	Processing struct {
 		// Reader configuration
@@ -81,10 +87,10 @@ func validateConfig(config *Config) error {
 	}
 
 	// Streams validation
-	if config.Streams.Events == "" {
+	if config.Streams.Events.Name == "" {
 		return fmt.Errorf("stream events are required")
 	}
-	if config.Streams.Jobs == "" {
+	if config.Streams.Jobs.Name == "" {
 		return fmt.Errorf("stream jobs are required")
 	}
 
@@ -148,8 +154,16 @@ func getConfig() Config {
 	config.Redis.Consumer = baseConsumer + "_" + hostname
 
 	// Streams
-	config.Streams.Events = getEnv("STREAM_EVENTS", "freeswitch:telephony:events")
-	config.Streams.Jobs = getEnv("STREAM_JOBS", "freeswitch:telephony:background-jobs")
+	config.Streams.Events = StreamConfig{
+		Name:       getEnv("STREAM_EVENTS", "freeswitch:telephony:events"),
+		MaxLen:     getEnvAsInt64("EVENTS_MAX_LEN", 10000),
+		ExpireTime: getEnvAsInt64("EVENTS_EXPIRE_TIME", 600), // 10 minutes
+	}
+	config.Streams.Jobs = StreamConfig{
+		Name:       getEnv("STREAM_JOBS", "freeswitch:telephony:background-jobs"),
+		MaxLen:     getEnvAsInt64("JOBS_MAX_LEN", 10000),
+		ExpireTime: getEnvAsInt64("JOBS_EXPIRE_TIME", 60), // 1 minute
+	}
 
 	// Processing - Reader
 	config.Processing.ReaderBatchSize = getEnvAsInt64("READER_BATCH_SIZE", 5000)

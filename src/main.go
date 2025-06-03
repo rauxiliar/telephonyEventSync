@@ -71,6 +71,46 @@ func printMetrics() {
 	}
 }
 
+func trimStreams(ctx context.Context, config Config) {
+	ticker := time.NewTicker(30 * time.Second) // each 30 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Get current Redis time
+			timeCmd := rLocal.Time(ctx)
+			if timeCmd.Err() != nil {
+				LogError("Failed to get Redis time: %v", timeCmd.Err())
+				continue
+			}
+
+			// Calculate trim times
+			timestampMs := time.Now().UnixMilli()
+			eventsTrimTime := timestampMs - (config.Streams.Events.ExpireTime * 1000)
+			jobsTrimTime := timestampMs - (config.Streams.Jobs.ExpireTime * 1000)
+
+			// Trim events stream
+			eventsResult, err := rLocal.XTrimMinID(ctx, config.Streams.Events.Name, fmt.Sprintf("%d-0", eventsTrimTime)).Result()
+			if err != nil {
+				LogError("Failed to trim events stream: %v", err)
+			} else {
+				LogDebug("Trimmed %d entries from %s", eventsResult, config.Streams.Events.Name)
+			}
+
+			// Trim jobs stream
+			jobsResult, err := rLocal.XTrimMinID(ctx, config.Streams.Jobs.Name, fmt.Sprintf("%d-0", jobsTrimTime)).Result()
+			if err != nil {
+				LogError("Failed to trim jobs stream: %v", err)
+			} else {
+				LogDebug("Trimmed %d entries from %s", jobsResult, config.Streams.Jobs.Name)
+			}
+		}
+	}
+}
+
 func main() {
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -115,7 +155,7 @@ func main() {
 	}
 
 	// Create groups in local streams
-	streams := []string{config.Streams.Events, config.Streams.Jobs}
+	streams := []string{config.Streams.Events.Name, config.Streams.Jobs.Name}
 	for _, stream := range streams {
 		if err := createGroup(ctx, rLocal, stream, config.Redis.Group); err != nil {
 			LogError("Error creating group in stream %s: %v", stream, err)
@@ -162,6 +202,9 @@ func main() {
 
 	// Start latency checker
 	startLatencyChecker(config)
+
+	// Start trim routine
+	go trimStreams(ctx, config)
 
 	// Wait for interrupt signal
 	<-sigChan

@@ -17,8 +17,8 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 
 	// Pre-allocate streams slice with exact size
 	streams := make([]string, 4) // 2 streams * 2 (stream + ">")
-	streams[0] = config.Streams.Events
-	streams[1] = config.Streams.Jobs
+	streams[0] = config.Streams.Events.Name
+	streams[1] = config.Streams.Jobs.Name
 	streams[2] = ">"
 	streams[3] = ">"
 

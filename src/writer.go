@@ -113,9 +113,15 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 			}
 
 			// Add message to pipeline
+			maxLen := config.Streams.Events.MaxLen
+			if msg.stream == config.Streams.Jobs.Name {
+				maxLen = config.Streams.Jobs.MaxLen
+			}
 			pipe.XAdd(ctx, &redis.XAddArgs{
 				Stream: msg.stream,
 				Values: msg.values,
+				MaxLen: maxLen,
+				Approx: true,
 			})
 			pendingMsgs = append(pendingMsgs, msg)
 

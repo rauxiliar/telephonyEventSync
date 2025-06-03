@@ -139,9 +139,9 @@ func handleUnixConnection(conn net.Conn, ch chan<- message, config Config) {
 					continue
 				}
 			}
-			stream = config.Streams.Jobs
+			stream = config.Streams.Jobs.Name
 		} else if eventsToPush[eventType] {
-			stream = config.Streams.Events
+			stream = config.Streams.Events.Name
 		} else {
 			LogDebug("Skipping event of type: %s", eventType)
 			continue
