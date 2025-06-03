@@ -34,7 +34,10 @@ type Config struct {
 	Unix struct {
 		SocketPath string
 	}
-	Streams    []string
+	Streams struct {
+		Events string
+		Jobs   string
+	}
 	Processing struct {
 		// Reader configuration
 		ReaderBatchSize  int64
@@ -78,8 +81,11 @@ func validateConfig(config *Config) error {
 	}
 
 	// Streams validation
-	if len(config.Streams) == 0 {
-		return fmt.Errorf("at least one stream is required")
+	if config.Streams.Events == "" {
+		return fmt.Errorf("stream events are required")
+	}
+	if config.Streams.Jobs == "" {
+		return fmt.Errorf("stream jobs are required")
 	}
 
 	// Processing validation
@@ -142,10 +148,8 @@ func getConfig() Config {
 	config.Redis.Consumer = baseConsumer + "_" + hostname
 
 	// Streams
-	config.Streams = []string{
-		getEnv("STREAM_EVENTS", "freeswitch:telephony:events"),
-		getEnv("STREAM_JOBS", "freeswitch:telephony:background-jobs"),
-	}
+	config.Streams.Events = getEnv("STREAM_EVENTS", "freeswitch:telephony:events")
+	config.Streams.Jobs = getEnv("STREAM_JOBS", "freeswitch:telephony:background-jobs")
 
 	// Processing - Reader
 	config.Processing.ReaderBatchSize = getEnvAsInt64("READER_BATCH_SIZE", 5000)

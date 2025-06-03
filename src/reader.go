@@ -16,11 +16,11 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 	defer wg.Done()
 
 	// Pre-allocate streams slice with exact size
-	streams := make([]string, len(config.Streams)*2)
-	for i, stream := range config.Streams {
-		streams[i] = stream
-		streams[i+len(config.Streams)] = ">"
-	}
+	streams := make([]string, 4) // 2 streams * 2 (stream + ">")
+	streams[0] = config.Streams.Events
+	streams[1] = ">"
+	streams[2] = config.Streams.Jobs
+	streams[3] = ">"
 
 	// Batch metrics update
 	metricsUpdateTicker := time.NewTicker(1 * time.Second)
