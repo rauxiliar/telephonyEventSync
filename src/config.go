@@ -29,11 +29,10 @@ type Config struct {
 		Consumer string
 	}
 	Reader struct {
-		Type string // "redis" ou "tcp"
+		Type string // "redis" ou "unix"
 	}
-	TCP struct {
-		Address    string
-		BufferSize int
+	Unix struct {
+		SocketPath string
 	}
 	Streams    []string
 	Processing struct {
@@ -118,9 +117,8 @@ func getConfig() Config {
 	// Reader Type
 	config.Reader.Type = getEnv("READER_TYPE", "redis")
 
-	// TCP Configuration
-	config.TCP.Address = getEnv("TCP_ADDRESS", "localhost:12345")
-	config.TCP.BufferSize = getEnvAsInt("TCP_BUFFER_SIZE", 4096)
+	// Unix Socket Configuration
+	config.Unix.SocketPath = getEnv("UNIX_SOCKET_PATH", "/var/run/telephony/telephony.sock")
 
 	// Redis Local
 	config.Redis.Local.Address = getEnv("REDIS_LOCAL_ADDR", "localhost:6379")

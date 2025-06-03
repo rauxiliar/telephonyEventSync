@@ -7,9 +7,10 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
+    volumes:
+      - /var/run/telephony:/var/run/telephony
     ports:
       - "${HEALTH_PORT:-9876}:9876"
-      - "${TCP_PORT:-12345}:12345"
     network_mode: host
     restart: unless-stopped
     healthcheck:

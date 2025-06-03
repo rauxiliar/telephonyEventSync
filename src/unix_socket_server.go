@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -11,11 +12,24 @@ import (
 func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, config Config) {
 	defer wg.Done()
 
+	// Get socket path from config or use default
+	socketPath := config.Unix.SocketPath
+	if socketPath == "" {
+		socketPath = "/var/run/telephony/telephony.sock"
+	}
+
+	// Ensure directory exists
+	socketDir := filepath.Dir(socketPath)
+	if err := os.MkdirAll(socketDir, 0755); err != nil {
+		LogError("Error creating socket directory: %v", err)
+		return
+	}
+
 	// Remove socket file if it exists
-	os.Remove("/tmp/telephony.sock")
+	os.Remove(socketPath)
 
 	// Create Unix socket listener
-	listener, err := net.Listen("unix", "/tmp/telephony.sock")
+	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		LogError("Error creating Unix socket: %v", err)
 		return
@@ -23,12 +37,12 @@ func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 	defer listener.Close()
 
 	// Set socket permissions
-	if err := os.Chmod("/tmp/telephony.sock", 0666); err != nil {
+	if err := os.Chmod(socketPath, 0666); err != nil {
 		LogError("Error setting socket permissions: %v", err)
 		return
 	}
 
-	LogInfo("Unix socket server started at /tmp/telephony.sock")
+	LogInfo("Unix socket server started at %s", socketPath)
 
 	// Accept connections
 	for {
