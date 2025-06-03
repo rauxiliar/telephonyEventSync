@@ -141,7 +141,6 @@ func handleUnixConnection(conn net.Conn, ch chan<- message, config Config) {
 		// Create message
 		msg := message{
 			stream:   stream,
-			id:       time.Now().String(),
 			values:   map[string]string{"event": messageStr},
 			readTime: time.Now(),
 		}
