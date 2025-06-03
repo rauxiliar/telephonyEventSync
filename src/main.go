@@ -143,10 +143,10 @@ func main() {
 			configCopy.Redis.Consumer = fmt.Sprintf("%s_%d", config.Redis.Consumer, i)
 			go reader(ctx, ch, &wg, i, configCopy)
 		}
-	case "tcp":
-		go tcpReader(ctx, ch, &wg, 0, config)
+	case "unix":
+		go unixSocketServer(ctx, ch, &wg, 0, config)
 	default:
-		LogError("Invalid reader type: %s. Use 'redis' or 'tcp'", config.Reader.Type)
+		LogError("Invalid reader type: %s. Use 'redis' or 'unix'", config.Reader.Type)
 		os.Exit(1)
 	}
 
