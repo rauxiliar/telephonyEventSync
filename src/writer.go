@@ -69,10 +69,12 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 				LogWarn("Latency channel full, message %s discarded", msg.id)
 			}
 
-			// ACK the message
-			if err := rLocal.XAck(ctx, msg.stream, config.Redis.Group, msg.id).Err(); err != nil {
-				LogError("Failed to acknowledge message %s: %v", msg.id, err)
-				errorCount++
+			// ACK the message only if it came from Redis reader
+			if config.Reader.Type == "redis" && msg.id != "" {
+				if err := rLocal.XAck(ctx, msg.stream, config.Redis.Group, msg.id).Err(); err != nil {
+					LogError("Failed to acknowledge message %s: %v", msg.id, err)
+					errorCount++
+				}
 			}
 
 			processedCount++

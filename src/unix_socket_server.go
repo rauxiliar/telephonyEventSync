@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -120,6 +121,14 @@ func handleUnixConnection(conn net.Conn, ch chan<- message, config Config) {
 			continue
 		}
 
+		// Extract event timestamp
+		var eventTimestamp int64
+		if timestamp, ok := event["Event-Date-Timestamp"].(string); ok {
+			if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+				eventTimestamp = ts * 1000 // Convert to nanoseconds
+			}
+		}
+
 		// Determine stream based on event type
 		var stream string
 		if eventsToPublish[eventType] {
@@ -140,9 +149,10 @@ func handleUnixConnection(conn net.Conn, ch chan<- message, config Config) {
 
 		// Create message
 		msg := message{
-			stream:   stream,
-			values:   map[string]string{"event": messageStr},
-			readTime: time.Now(),
+			stream:         stream,
+			values:         map[string]string{"event": messageStr},
+			readTime:       time.Now(),
+			eventTimestamp: eventTimestamp,
 		}
 
 		// Try to send message to channel with timeout
