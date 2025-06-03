@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -53,7 +55,9 @@ func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
-				LogError("Error accepting connection: %v", err)
+				if !isClosedError(err) {
+					LogError("Error accepting connection: %v", err)
+				}
 				continue
 			}
 
@@ -64,28 +68,62 @@ func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 }
 
 func handleUnixConnection(conn net.Conn, ch chan<- message) {
-	defer conn.Close()
+	defer func() {
+		LogInfo("Closing connection from %s", conn.RemoteAddr())
+		conn.Close()
+	}()
 
-	buffer := make([]byte, 4096)
+	LogInfo("New connection from %s", conn.RemoteAddr())
+
+	reader := bufio.NewReader(conn)
 	for {
-		n, err := conn.Read(buffer)
+		// Set read deadline
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+		// Read message
+		messageStr, err := reader.ReadString('\n')
 		if err != nil {
-			LogError("Error reading from Unix socket: %v", err)
+			if !isClosedError(err) {
+				LogError("Error reading from Unix socket: %v", err)
+			}
 			return
 		}
 
-		if n > 0 {
-			// Create message
+		// Parse message
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(messageStr), &event); err != nil {
+			LogError("Error parsing message: %v", err)
+			continue
+		}
+
+		// Create message
+		msg := message{
+			stream:   "freeswitch_events",
+			id:       time.Now().String(),
+			values:   map[string]string{"event": messageStr},
+			readTime: time.Now(),
+		}
+
+		// Try to send message to channel with timeout
+		select {
+		case ch <- msg:
+			LogInfo("Event sent to channel: %s", messageStr[:100]) // Log first 100 chars
+		case <-time.After(1 * time.Second):
+			LogWarn("Timeout sending message to channel, buffer might be full")
+			// Try one more time without timeout
 			select {
-			case ch <- message{
-				stream:   "freeswitch_events",
-				id:       time.Now().String(),
-				values:   map[string]string{"event": string(buffer[:n])},
-				readTime: time.Now(),
-			}:
+			case ch <- msg:
+				LogInfo("Event sent to channel after retry: %s", messageStr[:100])
 			default:
-				LogWarn("Buffer full, message discarded from Unix socket")
+				LogError("Failed to send message to channel, buffer is full")
 			}
 		}
 	}
+}
+
+func isClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "EOF" || err.Error() == "use of closed network connection"
 }

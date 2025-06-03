@@ -13,6 +13,7 @@ services:
       - "${HEALTH_PORT:-9876}:9876"
     network_mode: host
     restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9876/health"]
       interval: 30s
