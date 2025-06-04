@@ -128,161 +128,101 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
-	// Create ring buffer and worker pool
-	bufferSize := 1000
-	workerCount := 50
-	ring := newRingBuffer(bufferSize)
-
-	// Start metrics goroutine
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				LogInfo("Ring buffer metrics: %s", ring.metrics())
-			}
-		}
-	}()
-
-	// Start workers
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					evt := ring.get()
-					processESLEvent(evt, ch, config)
-				}
-			}
-		}()
-	}
-
-	// Create a channel for reading events
-	readChan := make(chan *eventsocket.Event, bufferSize)
-	errChan := make(chan error, 1)
-
-	// Start reader goroutine
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				evt, err := client.ReadEvent()
-				if err != nil {
-					if !isClosedError(err) {
-						errChan <- err
-					}
-					return
-				}
-				select {
-				case readChan <- evt:
-					// Event sent successfully
-				default:
-					// Channel is full, drop event
-					LogError("Read channel is full, dropping event")
-				}
-			}
-		}
-	}()
-
 	// Process events
 	for {
 		select {
 		case <-ctx.Done():
 			LogInfo("Stopping ESL server")
 			return
-		case err := <-errChan:
-			LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
-			return
-		case evt := <-readChan:
-			// Add to ring buffer
-			ring.put(evt)
-		}
-	}
-}
-
-func processESLEvent(evt *eventsocket.Event, ch chan<- message, config Config) {
-	if evt == nil {
-		LogError("Received nil event")
-		return
-	}
-
-	// Ignore command replies
-	if evt.Get("Content-Type") == "command/reply" {
-		return
-	}
-
-	// Get event type directly from headers
-	eventType := evt.Get("Event-Name")
-	if eventType == "" {
-		LogError("Event type not found in headers. Headers: %+v", evt)
-		return
-	}
-
-	// Extract event timestamp
-	var eventTimestamp int64
-	if timestamp := evt.Get("Event-Date-Timestamp"); timestamp != "" {
-		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
-			eventTimestamp = ts * 1000 // Convert to nanoseconds
-		}
-	}
-
-	// Check reader latency
-	readTime := time.Now()
-	eventTime := time.Unix(0, eventTimestamp)
-	readerLatency := readTime.Sub(eventTime)
-	if readerLatency > config.Processing.ReaderMaxLatency {
-		LogWarn("High reader latency since event trigger detected for ESL socket message: %v", readerLatency)
-	}
-
-	// Determine stream based on event type
-	var stream string
-	if eslEventsToPublish[eventType] {
-		// For BACKGROUND_JOB, check Event-Calling-Function
-		if eventType == "BACKGROUND_JOB" {
-			if callingFunction := evt.Get("Event-Calling-Function"); callingFunction != "api_exec" {
-				return
-			}
-		}
-		stream = config.Streams.Jobs.Name
-	} else if eslEventsToPush[eventType] {
-		stream = config.Streams.Events.Name
-	} else {
-		return
-	}
-
-	// Convert headers to JSON directly without intermediate map
-	eventJSON, err := json.Marshal(evt.Header)
-	if err != nil {
-		LogError("Error serializing event: %v", err)
-		return
-	}
-
-	// Create message
-	msg := message{
-		stream:         stream,
-		values:         map[string]string{"event": string(eventJSON)},
-		readTime:       readTime,
-		eventTimestamp: eventTimestamp,
-	}
-
-	// Send message to channel with shorter timeout
-	select {
-	case ch <- msg:
-		// Message sent successfully
-	case <-time.After(50 * time.Millisecond):
-		// Try one more time without timeout
-		select {
-		case ch <- msg:
-			// Message sent after retry
 		default:
-			LogError("Failed to send message to channel %s, buffer is full", stream)
+			evt, err := client.ReadEvent()
+			if err != nil {
+				if !isClosedError(err) {
+					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
+				}
+				continue
+			}
+
+			// Process event in a new goroutine
+			go func(evt *eventsocket.Event) {
+				if evt == nil {
+					LogError("Received nil event")
+					return
+				}
+
+				// Ignore command replies
+				if evt.Get("Content-Type") == "command/reply" {
+					return
+				}
+
+				// Get event type directly from headers
+				eventType := evt.Get("Event-Name")
+				if eventType == "" {
+					LogError("Event type not found in headers. Headers: %+v", evt)
+					return
+				}
+
+				// Extract event timestamp
+				var eventTimestamp int64
+				if timestamp := evt.Get("Event-Date-Timestamp"); timestamp != "" {
+					if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+						eventTimestamp = ts * 1000 // Convert to nanoseconds
+					}
+				}
+
+				// Check reader latency
+				readTime := time.Now()
+				eventTime := time.Unix(0, eventTimestamp)
+				readerLatency := readTime.Sub(eventTime)
+				if readerLatency > config.Processing.ReaderMaxLatency {
+					LogWarn("High reader latency since event trigger detected for ESL socket message: %v", readerLatency)
+				}
+
+				// Determine stream based on event type
+				var stream string
+				if eslEventsToPublish[eventType] {
+					// For BACKGROUND_JOB, check Event-Calling-Function
+					if eventType == "BACKGROUND_JOB" {
+						if callingFunction := evt.Get("Event-Calling-Function"); callingFunction != "api_exec" {
+							return
+						}
+					}
+					stream = config.Streams.Jobs.Name
+				} else if eslEventsToPush[eventType] {
+					stream = config.Streams.Events.Name
+				} else {
+					return
+				}
+
+				// Convert headers to JSON directly
+				eventJSON, err := json.Marshal(evt.Header)
+				if err != nil {
+					LogError("Error serializing event: %v", err)
+					return
+				}
+
+				// Create message
+				msg := message{
+					stream:         stream,
+					values:         map[string]string{"event": string(eventJSON)},
+					readTime:       readTime,
+					eventTimestamp: eventTimestamp,
+				}
+
+				// Send message to channel with shorter timeout
+				select {
+				case ch <- msg:
+					// Message sent successfully
+				case <-time.After(50 * time.Millisecond):
+					// Try one more time without timeout
+					select {
+					case ch <- msg:
+						// Message sent after retry
+					default:
+						LogError("Failed to send message to channel %s, buffer is full", stream)
+					}
+				}
+			}(evt)
 		}
 	}
 }
