@@ -39,11 +39,33 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	}
 	defer client.Close()
 
+	// Send auth command first
+	if err := client.Send("auth " + config.ESL.Password); err != nil {
+		LogError("Failed to authenticate: %v", err)
+		return
+	}
+
+	// Read auth response
+	authResponse, err := client.ReadMessage()
+	if err != nil {
+		LogError("Failed to read auth response: %v", err)
+		return
+	}
+	LogDebug("Auth response: %+v", authResponse)
+
 	// Subscribe to events
-	if err := client.Send("event plain ALL"); err != nil {
+	if err := client.Send("/event plain ALL"); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
 	}
+
+	// Read subscription response
+	subResponse, err := client.ReadMessage()
+	if err != nil {
+		LogError("Failed to read subscription response: %v", err)
+		return
+	}
+	LogDebug("Subscription response: %+v", subResponse)
 
 	LogInfo("ESL server started and connected to FreeSWITCH")
 
