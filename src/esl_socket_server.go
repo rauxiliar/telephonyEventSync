@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -32,8 +31,6 @@ var eslEventsToPush = map[string]bool{
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
-	LogInfo("Iniciando conexão ESL com %s:%d", config.ESL.Host, config.ESL.Port)
-
 	// Create ESL client
 	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 20)
 	if err != nil {
@@ -42,43 +39,13 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	}
 	defer client.Close()
 
-	// Send auth command first
-	authCmd := fmt.Sprintf("auth %s", config.ESL.Password)
-	LogInfo("Enviando comando de autenticação: %s", authCmd)
-	if err := client.Send(authCmd); err != nil {
-		LogError("Failed to authenticate: %v", err)
-		return
-	}
-
-	// Read auth response
-	authResponse, err := client.ReadMessage()
-	if err != nil {
-		LogError("Failed to read auth response: %v", err)
-		return
-	}
-	LogInfo("Auth response: %+v", authResponse)
+	// Start handling messages in a goroutine
+	go client.Handle()
 
 	// Subscribe to events
-	eventCmd := "event plain ALL"
-	LogInfo("Enviando comando de eventos: %s", eventCmd)
-	if err := client.Send(eventCmd); err != nil {
+	if err := client.Send("event plain ALL"); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
-	}
-
-	// Read subscription response
-	subResponse, err := client.ReadMessage()
-	if err != nil {
-		LogError("Failed to read subscription response: %v", err)
-		return
-	}
-	LogInfo("Subscription response: %+v", subResponse)
-
-	// Send test event
-	testCmd := "event CUSTOM test_event"
-	LogInfo("Enviando evento de teste: %s", testCmd)
-	if err := client.Send(testCmd); err != nil {
-		LogError("Failed to send test event: %v", err)
 	}
 
 	LogInfo("ESL server started and connected to FreeSWITCH")
@@ -97,12 +64,6 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 					LogError("Error reading ESL event: %v", err)
 				}
 				continue
-			}
-
-			// Log raw event for debugging
-			LogInfo("Received ESL event type: %T", evt)
-			if evt != nil {
-				LogInfo("Event headers: %+v", evt.Headers)
 			}
 
 			// Process event
@@ -124,15 +85,11 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
-	LogInfo("Processing event type: %s", eventType)
-
 	// Extract event timestamp
 	var eventTimestamp int64
 	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
-		} else {
-			LogError("Failed to parse timestamp: %v", err)
 		}
 	}
 
@@ -142,7 +99,6 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		// For BACKGROUND_JOB, check Event-Calling-Function
 		if eventType == "BACKGROUND_JOB" {
 			if callingFunction := evt.GetHeader("Event-Calling-Function"); callingFunction != "api_exec" {
-				LogDebug("Skipping BACKGROUND_JOB event with function: %v", callingFunction)
 				return
 			}
 		}
@@ -150,7 +106,6 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	} else if eslEventsToPush[eventType] {
 		stream = config.Streams.Events.Name
 	} else {
-		LogDebug("Skipping event of type: %s", eventType)
 		return
 	}
 
