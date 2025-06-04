@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -146,9 +147,23 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
+	// Create event map with all headers
+	eventMap := make(map[string]string)
+	maps.Copy(eventMap, evt.Headers)
+
+	// Add body if exists
+	if len(evt.Body) > 0 {
+		eventMap["body"] = string(evt.Body)
+	}
+
+	// Create the final event structure
+	values := map[string]string{
+		"event": fmt.Sprintf("%v", eventMap),
+	}
+
 	msg := message{
 		stream:         stream,
-		values:         map[string]string{"event": fmt.Sprintf("%v", evt)},
+		values:         values,
 		readTime:       readTime,
 		eventTimestamp: eventTimestamp,
 	}
