@@ -53,7 +53,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	}
 
 	// Subscribe to specific events
-	eventCmd := fmt.Sprintf("event plain %s", strings.Join(events, " "))
+	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
 	if err := client.Send(eventCmd); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
@@ -91,7 +91,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 
 	// Check if this is an event message
 	contentType := evt.GetHeader("Content-Type")
-	if contentType != "text/event-plain" {
+	if contentType != "text/event-json" {
 		return
 	}
 
@@ -102,28 +102,31 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
-	// Parse event body into headers
-	eventHeaders := make(map[string]string)
-	for _, line := range strings.Split(body, "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) == 2 {
-			eventHeaders[parts[0]] = parts[1]
-		}
-	}
+	LogDebug("Received event body: %s", body)
 
-	// Extract event type
-	eventType := eventHeaders["Event-Name"]
-	if eventType == "" {
-		LogError("Event type not found in body")
+	// Parse JSON event
+	var eventHeaders map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &eventHeaders); err != nil {
+		LogError("Error parsing JSON event: %v", err)
 		return
 	}
 
+	// Extract event type
+	eventType, ok := eventHeaders["Event-Name"].(string)
+	if !ok {
+		// Try alternative header names
+		eventType, ok = eventHeaders["EventName"].(string)
+		if !ok {
+			LogError("Event type not found in body. Available headers: %v", eventHeaders)
+			return
+		}
+	}
+
+	LogDebug("Processing event type: %s", eventType)
+
 	// Extract event timestamp
 	var eventTimestamp int64
-	if timestamp := eventHeaders["Event-Date-Timestamp"]; timestamp != "" {
+	if timestamp, ok := eventHeaders["Event-Date-Timestamp"].(string); ok {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
 		}
@@ -134,7 +137,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	if eslEventsToPublish[eventType] {
 		// For BACKGROUND_JOB, check Event-Calling-Function
 		if eventType == "BACKGROUND_JOB" {
-			if callingFunction := eventHeaders["Event-Calling-Function"]; callingFunction != "api_exec" {
+			if callingFunction, ok := eventHeaders["Event-Calling-Function"].(string); !ok || callingFunction != "api_exec" {
 				return
 			}
 		}
@@ -142,6 +145,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	} else if eslEventsToPush[eventType] {
 		stream = config.Streams.Events.Name
 	} else {
+		LogDebug("Event type %s not in our watch list", eventType)
 		return
 	}
 
