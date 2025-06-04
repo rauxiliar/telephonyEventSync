@@ -149,6 +149,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
 		}
 	}
+	LogWarn("Event timestamp: %d", eventTimestamp)
 
 	// Check reader latency
 	readTime := time.Now()
