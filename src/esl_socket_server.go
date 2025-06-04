@@ -67,9 +67,9 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
-	// Create worker pool
-	workerCount := 10
-	eventChan := make(chan *goesl.Message, workerCount*2)
+	// Create worker pool with more workers
+	workerCount := 20
+	eventChan := make(chan *goesl.Message, workerCount*config.Processing.BufferSize)
 
 	// Start workers
 	for i := 0; i < workerCount; i++ {
@@ -108,12 +108,13 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				}
 				continue
 			case evt := <-readChan:
-				// Send to worker pool
+				// Send to worker pool with non-blocking send
 				select {
 				case eventChan <- evt:
 					// Event sent to worker pool
 				default:
-					LogWarn("Worker pool is full, dropping event")
+					// If worker pool is full, process in current goroutine
+					go processESLEvent(evt, ch, config)
 				}
 			case <-time.After(1 * time.Second): // Reduced timeout
 				LogWarn("Timeout reading from ESL socket")
@@ -154,7 +155,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	eventTime := time.Unix(0, eventTimestamp)
 	readerLatency := readTime.Sub(eventTime)
 	if readerLatency > config.Processing.ReaderMaxLatency {
-		LogWarn("High reader latency since event trigger detected for Unix socket message: %v", readerLatency)
+		LogWarn("High reader latency since event trigger detected for ESL socket message: %v", readerLatency)
 	}
 
 	// Determine stream based on event type
@@ -196,8 +197,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	select {
 	case ch <- msg:
 		// Message sent successfully
-	case <-time.After(100 * time.Millisecond):
-		LogWarn("Timeout sending message to channel %s, buffer might be full", stream)
+	case <-time.After(50 * time.Millisecond): // Reduced timeout
 		// Try one more time without timeout
 		select {
 		case ch <- msg:
