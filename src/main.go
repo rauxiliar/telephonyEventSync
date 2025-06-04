@@ -186,8 +186,10 @@ func main() {
 		}
 	case "unix":
 		go unixSocketServer(ctx, ch, &wg, config)
+	case "esl":
+		go eslSocketServer(ctx, ch, &wg, config)
 	default:
-		LogError("Invalid reader type: %s. Use 'redis' or 'unix'", config.Reader.Type)
+		LogError("Invalid reader type: %s. Use 'redis', 'unix' or 'esl'", config.Reader.Type)
 		os.Exit(1)
 	}
 

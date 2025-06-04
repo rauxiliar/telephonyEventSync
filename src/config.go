@@ -35,10 +35,15 @@ type Config struct {
 		Consumer string
 	}
 	Reader struct {
-		Type string // "redis" ou "unix"
+		Type string // "redis", "unix" ou "esl"
 	}
 	Unix struct {
 		SocketPath string
+	}
+	ESL struct {
+		Host     string
+		Port     int
+		Password string
 	}
 	Streams struct {
 		Events StreamConfig
@@ -134,6 +139,11 @@ func getConfig() Config {
 
 	// Unix Socket Configuration
 	config.Unix.SocketPath = getEnv("UNIX_SOCKET_PATH", "/var/run/telephony/telephony.sock")
+
+	// ESL Configuration
+	config.ESL.Host = getEnv("ESL_HOST", "127.0.0.1")
+	config.ESL.Port = getEnvAsInt("ESL_PORT", 8021)
+	config.ESL.Password = getEnv("ESL_PASSWORD", "ClueCon")
 
 	// Redis Local
 	config.Redis.Local.Address = getEnv("REDIS_LOCAL_ADDR", "localhost:6379")
