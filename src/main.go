@@ -89,8 +89,8 @@ func trimStreams(ctx context.Context, config Config) {
 
 			// Calculate trim times
 			now := time.Now()
-			eventsTrimTime := now.Add(-time.Duration(config.Streams.Events.ExpireTime) * time.Second).UnixMilli()
-			jobsTrimTime := now.Add(-time.Duration(config.Streams.Jobs.ExpireTime) * time.Second).UnixMilli()
+			eventsTrimTime := now.Add(-config.Streams.Events.ExpireTime).UnixMilli()
+			jobsTrimTime := now.Add(-config.Streams.Jobs.ExpireTime).UnixMilli()
 
 			// Trim events stream
 			eventsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Events.Name, fmt.Sprintf("%d-0", eventsTrimTime)).Result()

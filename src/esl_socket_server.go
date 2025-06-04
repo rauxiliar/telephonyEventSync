@@ -95,6 +95,11 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
+	// Ignore command replies
+	if evt.GetHeader("Content-Type") == "command/reply" {
+		return
+	}
+
 	// Get event type directly from headers
 	eventType := evt.GetHeader("Event-Name")
 	if eventType == "" {
