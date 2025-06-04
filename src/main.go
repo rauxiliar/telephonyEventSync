@@ -17,7 +17,8 @@ type Metrics struct {
 	messagesProcessed int64
 	errors            int64
 	lastSyncTime      time.Time
-	queueSize         int
+	readerChannelSize int // Size of the reader channel
+	writerChannelSize int // Size of the writer channel
 }
 
 type message struct {
@@ -59,10 +60,11 @@ func printMetrics() {
 
 	for range ticker.C {
 		metrics.Lock()
-		LogInfo("Messages processed (last 5s): %d, Errors: %d, Queue size: %d, Last sync: %v",
+		LogInfo("Messages processed (last 5s): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
 			metrics.messagesProcessed,
 			metrics.errors,
-			metrics.queueSize,
+			metrics.readerChannelSize,
+			metrics.writerChannelSize,
 			metrics.lastSyncTime.Format(time.RFC3339))
 
 		// Reset counter after each print

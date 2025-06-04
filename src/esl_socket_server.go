@@ -64,6 +64,24 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	// Buffered channel to avoid blocking reads
 	eslEventsChan := make(chan *goesl.Message, config.Processing.BufferSize)
 
+	// Ticker to update metrics
+	metricsUpdateTicker := time.NewTicker(1 * time.Second)
+	defer metricsUpdateTicker.Stop()
+
+	// Goroutine to update metrics
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsUpdateTicker.C:
+				metrics.Lock()
+				metrics.readerChannelSize = len(eslEventsChan)
+				metrics.Unlock()
+			}
+		}
+	}()
+
 	// Goroutine to read messages and push into buffered channel
 	go func() {
 		for {

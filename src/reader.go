@@ -22,22 +22,32 @@ func reader(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, id int, 
 	streams[2] = ">"
 	streams[3] = ">"
 
-	// Batch metrics update
+	// Ticker to update metrics of the channel
 	metricsUpdateTicker := time.NewTicker(1 * time.Second)
 	defer metricsUpdateTicker.Stop()
 
 	// Pre-allocate timestamp key for faster string operations
 	timestampKey := []byte("\"Event-Date-Timestamp\":\"")
 
+	// Goroutine to update metrics
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsUpdateTicker.C:
+				metrics.Lock()
+				metrics.readerChannelSize = len(ch)
+				metrics.Unlock()
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-stopChan:
 			LogInfo("Stopping reader %d after cleanup", id)
 			return
-		case <-metricsUpdateTicker.C:
-			metrics.Lock()
-			metrics.queueSize = len(ch)
-			metrics.Unlock()
 		default:
 			res, err := rLocal.XReadGroup(ctx, &redis.XReadGroupArgs{
 				Group:    config.Redis.Group,

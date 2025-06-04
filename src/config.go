@@ -185,7 +185,7 @@ func getConfig() Config {
 	config.Processing.ReaderWorkers = getEnvAsInt("READER_WORKERS", 3)
 
 	// Processing - Writer
-	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", 10)
+	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", 20)
 	config.Processing.WriterMaxLatency = getEnvAsDuration("WRITER_MAX_LATENCY", 100*time.Millisecond)
 	config.Processing.WriterPipelineTimeout = getEnvAsDuration("WRITER_PIPELINE_TIMEOUT", 25*time.Millisecond)
 	config.Processing.WriterWorkers = getEnvAsInt("WRITER_WORKERS", 10)

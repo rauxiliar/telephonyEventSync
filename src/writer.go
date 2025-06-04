@@ -102,6 +102,24 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 	lastPipelineExec := time.Now()
 	pendingMsgs := make([]message, 0, batchSize)
 
+	// Ticker to update metrics of the channel
+	metricsUpdateTicker := time.NewTicker(1 * time.Second)
+	defer metricsUpdateTicker.Stop()
+
+	// Goroutine to update metrics of the channel
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsUpdateTicker.C:
+				metrics.Lock()
+				metrics.writerChannelSize = len(ch)
+				metrics.Unlock()
+			}
+		}
+	}()
+
 	for {
 		select {
 		case msg, ok := <-ch:

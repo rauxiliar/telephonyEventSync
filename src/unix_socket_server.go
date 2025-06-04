@@ -64,6 +64,24 @@ func unixSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup
 
 	LogInfo("Unix socket server started at %s", socketPath)
 
+	// Ticker to update metrics of the channel
+	metricsUpdateTicker := time.NewTicker(1 * time.Second)
+	defer metricsUpdateTicker.Stop()
+
+	// Goroutine to update metrics
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsUpdateTicker.C:
+				metrics.Lock()
+				metrics.readerChannelSize = len(ch)
+				metrics.Unlock()
+			}
+		}
+	}()
+
 	// Accept connections
 	for {
 		select {
