@@ -67,10 +67,24 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
+	// Create worker pool
+	workerCount := 10
+	eventChan := make(chan *goesl.Message, workerCount*2)
+
+	// Start workers
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			for evt := range eventChan {
+				processESLEvent(evt, ch, config)
+			}
+		}()
+	}
+
 	// Process events
 	for {
 		select {
 		case <-ctx.Done():
+			close(eventChan)
 			LogInfo("Stopping ESL server")
 			return
 		default:
@@ -94,9 +108,14 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				}
 				continue
 			case evt := <-readChan:
-				// Process event in a separate goroutine
-				go processESLEvent(evt, ch, config)
-			case <-time.After(5 * time.Second):
+				// Send to worker pool
+				select {
+				case eventChan <- evt:
+					// Event sent to worker pool
+				default:
+					LogWarn("Worker pool is full, dropping event")
+				}
+			case <-time.After(1 * time.Second): // Reduced timeout
 				LogWarn("Timeout reading from ESL socket")
 				continue
 			}
@@ -169,20 +188,20 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	msg := message{
 		stream:         stream,
 		values:         map[string]string{"event": string(eventJSON)},
-		readTime:       time.Now(),
+		readTime:       readTime,
 		eventTimestamp: eventTimestamp,
 	}
 
-	// Send message to channel
+	// Send message to channel with shorter timeout
 	select {
 	case ch <- msg:
-		LogDebug("Event sent to channel %s: %s", stream, string(eventJSON)[:100])
-	case <-time.After(1 * time.Second):
+		// Message sent successfully
+	case <-time.After(100 * time.Millisecond):
 		LogWarn("Timeout sending message to channel %s, buffer might be full", stream)
 		// Try one more time without timeout
 		select {
 		case ch <- msg:
-			LogDebug("Event sent to channel %s after retry: %s", stream, string(eventJSON)[:100])
+			// Message sent after retry
 		default:
 			LogError("Failed to send message to channel %s, buffer is full", stream)
 		}
