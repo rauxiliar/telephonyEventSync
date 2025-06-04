@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -31,6 +32,8 @@ var eslEventsToPush = map[string]bool{
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
+	LogDebug("Iniciando conexão ESL com %s:%d", config.ESL.Host, config.ESL.Port)
+
 	// Create ESL client
 	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 20)
 	if err != nil {
@@ -40,7 +43,9 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	defer client.Close()
 
 	// Send auth command first
-	if err := client.Send("auth " + config.ESL.Password); err != nil {
+	authCmd := fmt.Sprintf("auth %s", config.ESL.Password)
+	LogDebug("Enviando comando de autenticação: %s", authCmd)
+	if err := client.Send(authCmd); err != nil {
 		LogError("Failed to authenticate: %v", err)
 		return
 	}
@@ -54,7 +59,9 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	LogDebug("Auth response: %+v", authResponse)
 
 	// Subscribe to events
-	if err := client.Send("/event plain ALL"); err != nil {
+	eventCmd := "event plain ALL"
+	LogDebug("Enviando comando de eventos: %s", eventCmd)
+	if err := client.Send(eventCmd); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
 	}
@@ -66,6 +73,13 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 		return
 	}
 	LogDebug("Subscription response: %+v", subResponse)
+
+	// Send test event
+	testCmd := "event CUSTOM test_event"
+	LogDebug("Enviando evento de teste: %s", testCmd)
+	if err := client.Send(testCmd); err != nil {
+		LogError("Failed to send test event: %v", err)
+	}
 
 	LogInfo("ESL server started and connected to FreeSWITCH")
 
