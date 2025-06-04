@@ -34,10 +34,11 @@ func startHealthServer() {
 		defer metrics.Unlock()
 
 		c.JSON(http.StatusOK, gin.H{
-			"messages_processed": metrics.messagesProcessed,
-			"errors":             metrics.errors,
-			"queue_size":         metrics.queueSize,
-			"last_sync":          metrics.lastSyncTime.Format(time.RFC3339),
+			"messages_processed":  metrics.messagesProcessed,
+			"errors":              metrics.errors,
+			"reader_channel_size": metrics.readerChannelSize,
+			"writer_channel_size": metrics.writerChannelSize,
+			"last_sync":           metrics.lastSyncTime.Format(time.RFC3339),
 		})
 	})
 
