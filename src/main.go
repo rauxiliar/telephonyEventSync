@@ -99,7 +99,7 @@ func trimStreams(ctx context.Context, config Config) {
 			LogDebug("Jobs trim time: %d", jobsTrimTime)
 
 			// Trim events stream
-			eventsTrimID := fmt.Sprintf("%d-0", eventsTrimTime)
+			eventsTrimID := fmt.Sprintf("%d", eventsTrimTime)
 			LogDebug("Attempting to trim events stream with ID: %s", eventsTrimID)
 			eventsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Events.Name, eventsTrimID).Result()
 			if err != nil {
@@ -109,7 +109,7 @@ func trimStreams(ctx context.Context, config Config) {
 			}
 
 			// Trim jobs stream
-			jobsTrimID := fmt.Sprintf("%d-0", jobsTrimTime)
+			jobsTrimID := fmt.Sprintf("%d", jobsTrimTime)
 			LogDebug("Attempting to trim jobs stream with ID: %s", jobsTrimID)
 			jobsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Jobs.Name, jobsTrimID).Result()
 			if err != nil {
