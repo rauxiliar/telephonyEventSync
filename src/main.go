@@ -162,10 +162,7 @@ func main() {
 	case "unix":
 		go unixSocketServer(ctx, ch, &wg, config)
 	case "esl":
-		for range config.Processing.ReaderWorkers {
-			configCopy := config
-			go eslSocketServer(ctx, ch, &wg, configCopy)
-		}
+		go eslSocketServer(ctx, ch, &wg, config)
 	default:
 		LogError("Invalid reader type: %s. Use 'redis', 'unix' or 'esl'", config.Reader.Type)
 		os.Exit(1)
