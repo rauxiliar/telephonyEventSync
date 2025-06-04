@@ -60,7 +60,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
 	// Buffered channel to avoid blocking reads
-	eslEventsChan := make(chan *goesl.Message, 1000)
+	eslEventsChan := make(chan *goesl.Message, config.Processing.BufferSize)
 
 	// Goroutine to read messages and push into buffered channel
 	go func() {
@@ -77,17 +77,21 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 					}
 					continue
 				}
-				eslEventsChan <- evt
+				select {
+				case eslEventsChan <- evt:
+				default:
+					LogWarn("ESL events channel full, event dropped")
+				}
 			}
 		}
 	}()
 
 	// Worker pool to process events in parallel
-	workerCount := 4
+	workerCount := config.Processing.ReaderWorkers
 	var workerWg sync.WaitGroup
 	workerWg.Add(workerCount)
 
-	for i := 0; i < workerCount; i++ {
+	for range workerCount {
 		go func() {
 			defer workerWg.Done()
 			for evt := range eslEventsChan {

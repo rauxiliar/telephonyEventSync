@@ -127,45 +127,11 @@ func main() {
 	healthMonitor = NewHealthMonitor(config)
 	healthMonitor.Start()
 
-	// Connect to local and remote Redis with optimized settings
-	rLocal = redis.NewClient(&redis.Options{
-		Addr:         config.Redis.Local.Address,
-		Password:     config.Redis.Local.Password,
-		DB:           config.Redis.Local.DB,
-		PoolSize:     config.Redis.Local.PoolSize,
-		MinIdleConns: config.Redis.Local.MinIdleConns,
-		MaxRetries:   config.Redis.Local.MaxRetries,
-	})
-	rRemote = redis.NewClient(&redis.Options{
-		Addr:         config.Redis.Remote.Address,
-		Password:     config.Redis.Remote.Password,
-		DB:           config.Redis.Remote.DB,
-		PoolSize:     config.Redis.Remote.PoolSize,
-		MinIdleConns: config.Redis.Remote.MinIdleConns,
-		MaxRetries:   config.Redis.Remote.MaxRetries,
-	})
-	// Verify connections
-	if err := rLocal.Ping(ctx).Err(); err != nil {
-		LogError("Error connecting to local Redis: %v", err)
+	// Initialize Redis connections
+	if err := initializeRedisConnections(ctx, config); err != nil {
+		LogError("%v", err)
 		os.Exit(1)
 	}
-	if err := rRemote.Ping(ctx).Err(); err != nil {
-		LogError("Error connecting to remote Redis: %v", err)
-		os.Exit(1)
-	}
-
-	// Create groups in local streams
-	streams := []string{config.Streams.Events.Name, config.Streams.Jobs.Name}
-	for _, stream := range streams {
-		if err := createGroup(ctx, rLocal, stream, config.Redis.Group); err != nil {
-			LogError("Error creating group in stream %s: %v", stream, err)
-			os.Exit(1)
-		}
-	}
-
-	// Initialize cleanup mechanism
-	cleanup := NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, streams, config.Processing.ReaderWorkers)
-	cleanup.Start()
 
 	ch := make(chan message, config.Processing.BufferSize)
 	var wg sync.WaitGroup
@@ -177,17 +143,29 @@ func main() {
 	// Start multiple readers and multiple writers
 	wg.Add(1 + config.Processing.ReaderWorkers)
 
+	var cleanup *ConsumerCleanup
+
 	switch config.Reader.Type {
 	case "redis":
+		// Initialize cleanup mechanism
+		streams := []string{config.Streams.Events.Name, config.Streams.Jobs.Name}
+		cleanup = NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, streams, config.Processing.ReaderWorkers)
+		cleanup.Start()
+
+		// Start multiple readers and multiple writers
 		for i := range config.Processing.ReaderWorkers {
 			configCopy := config
 			configCopy.Redis.Consumer = fmt.Sprintf("%s_%d", config.Redis.Consumer, i)
 			go reader(ctx, ch, &wg, i, configCopy)
 		}
+
 	case "unix":
 		go unixSocketServer(ctx, ch, &wg, config)
 	case "esl":
-		go eslSocketServer(ctx, ch, &wg, config)
+		for range config.Processing.ReaderWorkers {
+			configCopy := config
+			go eslSocketServer(ctx, ch, &wg, configCopy)
+		}
 	default:
 		LogError("Invalid reader type: %s. Use 'redis', 'unix' or 'esl'", config.Reader.Type)
 		os.Exit(1)
@@ -205,7 +183,7 @@ func main() {
 	// Start latency checker
 	startLatencyChecker(config)
 
-	// Start trim routine
+	// Start trim routine (needed for all reader types)
 	go trimStreams(ctx, config)
 
 	// Wait for interrupt signal
@@ -224,15 +202,16 @@ func main() {
 	// Close message channel
 	close(ch)
 
-	// Stop cleanup
-	cleanup.Stop()
+	// Stop cleanup if Redis reader
+	if config.Reader.Type == "redis" {
+		cleanup.Stop()
+	}
+
+	// Close Redis connections
+	closeRedisConnections(config)
 
 	// Wait for goroutines to finish
 	wg.Wait()
-
-	// Close Redis connections
-	rLocal.Close()
-	rRemote.Close()
 
 	LogInfo("Shutdown complete")
 }
