@@ -102,12 +102,15 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	defer wg.Done()
 
 	// Create ESL client
-	client, err := goesl.NewClient(fmt.Sprintf("%s:%d", config.ESL.Host, config.ESL.Port), uint(config.ESL.Port), config.ESL.Password, 10)
+	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 10)
 	if err != nil {
 		LogError("Failed to create ESL client: %v", err)
 		return
 	}
 	defer client.Close()
+
+	// Start handling messages in a separate goroutine
+	go client.Handle()
 
 	// Build event list from our maps
 	var events []string
