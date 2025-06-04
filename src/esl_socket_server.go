@@ -154,7 +154,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 
 	// Add body if exists
 	if len(evt.Body) > 0 {
-		eventMap["body"] = string(evt.Body)
+		eventMap["_body"] = string(evt.Body)
 	}
 
 	// Convert event map to JSON string
