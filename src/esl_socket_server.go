@@ -77,6 +77,8 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				continue
 			}
 
+			LogInfo("Received event: %+v", evt)
+
 			// Process event
 			processESLEvent(evt, ch, config)
 		}
