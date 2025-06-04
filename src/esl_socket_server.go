@@ -9,10 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"maps"
-
-	"github.com/0x19/goesl"
-	"github.com/op/go-logging"
+	"github.com/fiorix/go-eventsocket/eventsocket"
 )
 
 // Event types that should be published to background-jobs stream
@@ -35,19 +32,13 @@ var eslEventsToPush = map[string]bool{
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
-	// Configure goesl logging to only show errors
-	logging.SetLevel(logging.ERROR, "goesl")
-
 	// Create ESL client
-	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 20)
+	client, err := eventsocket.Dial(fmt.Sprintf("%s:%d", config.ESL.Host, config.ESL.Port), config.ESL.Password)
 	if err != nil {
 		LogError("Failed to create ESL client: %v", err)
 		return
 	}
 	defer client.Close()
-
-	// Start handling messages in a goroutine
-	go client.Handle()
 
 	// Build event list from our maps
 	var events []string
@@ -60,96 +51,59 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	// Subscribe to specific events
 	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
-	if err := client.Send(eventCmd); err != nil {
+	if _, err := client.Send(eventCmd); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
 	}
 
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
-	// Create worker pool with more workers
-	workerCount := 20
-	eventChan := make(chan *goesl.Message, workerCount*config.Processing.BufferSize)
-
-	// Start workers
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			for evt := range eventChan {
-				processESLEvent(evt, ch, config)
-			}
-		}()
-	}
-
 	// Process events
 	for {
 		select {
 		case <-ctx.Done():
-			close(eventChan)
 			LogInfo("Stopping ESL server")
 			return
 		default:
-			// Read event with timeout
-			readChan := make(chan *goesl.Message, 1)
-			errChan := make(chan error, 1)
-
-			go func() {
-				evt, err := client.ReadMessage()
-				if err != nil {
-					errChan <- err
-					return
-				}
-				readChan <- evt
-			}()
-
-			select {
-			case err := <-errChan:
+			evt, err := client.ReadEvent()
+			if err != nil {
 				if !isClosedError(err) {
 					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
 				}
 				continue
-			case evt := <-readChan:
-				// Send to worker pool with non-blocking send
-				select {
-				case eventChan <- evt:
-					// Event sent to worker pool
-				default:
-					// If worker pool is full, process in current goroutine
-					go processESLEvent(evt, ch, config)
-				}
-			case <-time.After(1 * time.Second): // Reduced timeout
-				LogWarn("Timeout reading from ESL socket")
-				continue
 			}
+
+			// Process event in a goroutine
+			go processESLEvent(evt, ch, config)
 		}
 	}
 }
 
-func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
+func processESLEvent(evt *eventsocket.Event, ch chan<- message, config Config) {
 	if evt == nil {
 		LogError("Received nil event")
 		return
 	}
 
 	// Ignore command replies
-	if evt.GetHeader("Content-Type") == "command/reply" {
+	if evt.Get("Content-Type") == "command/reply" {
 		return
 	}
 
 	// Get event type directly from headers
-	eventType := evt.GetHeader("Event-Name")
+	eventType := evt.Get("Event-Name")
 	if eventType == "" {
-		LogError("Event type not found in headers. Headers: %+v", evt.Headers)
+		LogError("Event type not found in headers. Headers: %+v", evt)
 		return
 	}
 
 	// Extract event timestamp
 	var eventTimestamp int64
-	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
+	if timestamp := evt.Get("Event-Date-Timestamp"); timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
 		}
 	}
-	LogWarn("Event timestamp: %d", eventTimestamp)
 
 	// Check reader latency
 	readTime := time.Now()
@@ -164,7 +118,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	if eslEventsToPublish[eventType] {
 		// For BACKGROUND_JOB, check Event-Calling-Function
 		if eventType == "BACKGROUND_JOB" {
-			if callingFunction := evt.GetHeader("Event-Calling-Function"); callingFunction != "api_exec" {
+			if callingFunction := evt.Get("Event-Calling-Function"); callingFunction != "api_exec" {
 				return
 			}
 		}
@@ -177,7 +131,9 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 
 	// Convert all headers to a map
 	eventHeaders := make(map[string]string)
-	maps.Copy(eventHeaders, evt.Headers)
+	for k := range evt.Header {
+		eventHeaders[k] = evt.Get(k)
+	}
 
 	// Convert event to JSON
 	eventJSON, err := json.Marshal(eventHeaders)
@@ -198,7 +154,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	select {
 	case ch <- msg:
 		// Message sent successfully
-	case <-time.After(50 * time.Millisecond): // Reduced timeout
+	case <-time.After(50 * time.Millisecond):
 		// Try one more time without timeout
 		select {
 		case ch <- msg:
