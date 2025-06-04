@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fiorix/go-eventsocket/eventsocket"
+	"github.com/0x19/goesl"
 )
 
 // Event types that should be published to background-jobs stream
@@ -30,7 +30,7 @@ var eslEventsToPush = map[string]bool{
 }
 
 type ringBuffer struct {
-	buffer     []*eventsocket.Event
+	buffer     []*goesl.Message
 	size       int
 	head       int
 	tail       int
@@ -46,7 +46,7 @@ type ringBuffer struct {
 
 func newRingBuffer(size int) *ringBuffer {
 	rb := &ringBuffer{
-		buffer: make([]*eventsocket.Event, size),
+		buffer: make([]*goesl.Message, size),
 		size:   size,
 	}
 	rb.notEmpty = sync.NewCond(&rb.mu)
@@ -54,7 +54,7 @@ func newRingBuffer(size int) *ringBuffer {
 	return rb
 }
 
-func (rb *ringBuffer) put(event *eventsocket.Event) {
+func (rb *ringBuffer) put(event *goesl.Message) {
 	start := time.Now()
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
@@ -71,7 +71,7 @@ func (rb *ringBuffer) put(event *eventsocket.Event) {
 	rb.notEmpty.Signal()
 }
 
-func (rb *ringBuffer) get() *eventsocket.Event {
+func (rb *ringBuffer) get() *goesl.Message {
 	start := time.Now()
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
@@ -102,7 +102,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	defer wg.Done()
 
 	// Create ESL client
-	client, err := eventsocket.Dial(fmt.Sprintf("%s:%d", config.ESL.Host, config.ESL.Port), config.ESL.Password)
+	client, err := goesl.NewClient(fmt.Sprintf("%s:%d", config.ESL.Host, config.ESL.Port), uint(config.ESL.Port), config.ESL.Password, 10)
 	if err != nil {
 		LogError("Failed to create ESL client: %v", err)
 		return
@@ -120,7 +120,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	// Subscribe to specific events
 	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
-	if _, err := client.Send(eventCmd); err != nil {
+	if err := client.Send(eventCmd); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
 	}
@@ -143,12 +143,12 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				}
 
 				// Ignore command replies
-				if evt.Get("Content-Type") == "command/reply" {
+				if evt.GetHeader("Content-Type") == "command/reply" {
 					continue
 				}
 
 				// Get event type directly from headers
-				eventType := evt.Get("Event-Name")
+				eventType := evt.GetHeader("Event-Name")
 				if eventType == "" {
 					LogError("Event type not found in headers. Headers: %+v", evt)
 					continue
@@ -156,7 +156,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 				// Extract event timestamp
 				var eventTimestamp int64
-				if timestamp := evt.Get("Event-Date-Timestamp"); timestamp != "" {
+				if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 					if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 						eventTimestamp = ts * 1000 // Convert to nanoseconds
 					}
@@ -175,7 +175,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				if eslEventsToPublish[eventType] {
 					// For BACKGROUND_JOB, check Event-Calling-Function
 					if eventType == "BACKGROUND_JOB" {
-						if callingFunction := evt.Get("Event-Calling-Function"); callingFunction != "api_exec" {
+						if callingFunction := evt.GetHeader("Event-Calling-Function"); callingFunction != "api_exec" {
 							continue
 						}
 					}
@@ -189,7 +189,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				// Create message
 				msg := message{
 					stream:         stream,
-					values:         map[string]string{"event": fmt.Sprintf("%v", evt.Header)},
+					values:         map[string]string{"event": fmt.Sprintf("%v", evt)},
 					readTime:       readTime,
 					eventTimestamp: eventTimestamp,
 				}
@@ -218,7 +218,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 			LogInfo("Stopping ESL server")
 			return
 		default:
-			evt, err := client.ReadEvent()
+			evt, err := client.ReadMessage()
 			if err != nil {
 				if !isClosedError(err) {
 					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
@@ -227,13 +227,17 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 			}
 
 			// Get event timestamp immediately after reading
-			if timestamp := evt.Get("Event-Date-Timestamp"); timestamp != "" {
+			if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 				if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 					eventTime := time.Unix(0, ts*1000)
 					receiveTime := time.Now()
 					receiveLatency := receiveTime.Sub(eventTime)
 					if receiveLatency > 100*time.Millisecond {
-						LogWarn("High receive latency from FreeSWITCH: %v (Event: %s)", receiveLatency, evt.Get("Event-Name"))
+						LogWarn("High receive latency from FreeSWITCH: %v (Event: %s, Job-UUID: %s, Event-Calling-Function: %s)",
+							receiveLatency,
+							evt.GetHeader("Event-Name"),
+							evt.GetHeader("Job-UUID"),
+							evt.GetHeader("Event-Calling-Function"))
 					}
 				}
 			}
