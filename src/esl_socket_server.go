@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -128,38 +127,31 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
-	// Process events
-	for {
-		select {
-		case <-ctx.Done():
-			LogInfo("Stopping ESL server")
-			return
-		default:
-			evt, err := client.ReadEvent()
-			if err != nil {
-				if !isClosedError(err) {
-					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
-				}
-				continue
-			}
+	// Create ring buffer for events
+	rb := newRingBuffer(1000) // Buffer size of 1000 events
 
-			// Process event in a new goroutine
-			go func(evt *eventsocket.Event) {
+	// Start event processor
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				evt := rb.get()
 				if evt == nil {
-					LogError("Received nil event")
-					return
+					continue
 				}
 
 				// Ignore command replies
 				if evt.Get("Content-Type") == "command/reply" {
-					return
+					continue
 				}
 
 				// Get event type directly from headers
 				eventType := evt.Get("Event-Name")
 				if eventType == "" {
 					LogError("Event type not found in headers. Headers: %+v", evt)
-					return
+					continue
 				}
 
 				// Extract event timestamp
@@ -184,27 +176,20 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 					// For BACKGROUND_JOB, check Event-Calling-Function
 					if eventType == "BACKGROUND_JOB" {
 						if callingFunction := evt.Get("Event-Calling-Function"); callingFunction != "api_exec" {
-							return
+							continue
 						}
 					}
 					stream = config.Streams.Jobs.Name
 				} else if eslEventsToPush[eventType] {
 					stream = config.Streams.Events.Name
 				} else {
-					return
-				}
-
-				// Convert headers to JSON directly
-				eventJSON, err := json.Marshal(evt.Header)
-				if err != nil {
-					LogError("Error serializing event: %v", err)
-					return
+					continue
 				}
 
 				// Create message
 				msg := message{
 					stream:         stream,
-					values:         map[string]string{"event": string(eventJSON)},
+					values:         map[string]string{"event": fmt.Sprintf("%v", evt.Header)},
 					readTime:       readTime,
 					eventTimestamp: eventTimestamp,
 				}
@@ -222,7 +207,39 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 						LogError("Failed to send message to channel %s, buffer is full", stream)
 					}
 				}
-			}(evt)
+			}
+		}
+	}()
+
+	// Process events
+	for {
+		select {
+		case <-ctx.Done():
+			LogInfo("Stopping ESL server")
+			return
+		default:
+			evt, err := client.ReadEvent()
+			if err != nil {
+				if !isClosedError(err) {
+					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
+				}
+				continue
+			}
+
+			// Get event timestamp immediately after reading
+			if timestamp := evt.Get("Event-Date-Timestamp"); timestamp != "" {
+				if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+					eventTime := time.Unix(0, ts*1000)
+					receiveTime := time.Now()
+					receiveLatency := receiveTime.Sub(eventTime)
+					if receiveLatency > 100*time.Millisecond {
+						LogWarn("High receive latency from FreeSWITCH: %v (Event: %s)", receiveLatency, evt.Get("Event-Name"))
+					}
+				}
+			}
+
+			// Put event in ring buffer
+			rb.put(evt)
 		}
 	}
 }
