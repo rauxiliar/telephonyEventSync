@@ -98,7 +98,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	// Get event type directly from headers
 	eventType := evt.GetHeader("Event-Name")
 	if eventType == "" {
-		LogError("Event type not found in headers")
+		LogError("Event type not found in headers. Headers: %+v", evt.Headers)
 		return
 	}
 
