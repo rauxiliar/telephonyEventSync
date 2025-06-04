@@ -92,8 +92,16 @@ func trimStreams(ctx context.Context, config Config) {
 			eventsTrimTime := now.Add(-config.Streams.Events.ExpireTime).UnixMilli()
 			jobsTrimTime := now.Add(-config.Streams.Jobs.ExpireTime).UnixMilli()
 
+			LogDebug("Current time: %v", now)
+			LogDebug("Events expire time: %v", config.Streams.Events.ExpireTime)
+			LogDebug("Jobs expire time: %v", config.Streams.Jobs.ExpireTime)
+			LogDebug("Events trim time: %d", eventsTrimTime)
+			LogDebug("Jobs trim time: %d", jobsTrimTime)
+
 			// Trim events stream
-			eventsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Events.Name, fmt.Sprintf("%d-0", eventsTrimTime)).Result()
+			eventsTrimID := fmt.Sprintf("%d-0", eventsTrimTime)
+			LogDebug("Attempting to trim events stream with ID: %s", eventsTrimID)
+			eventsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Events.Name, eventsTrimID).Result()
 			if err != nil {
 				LogError("Failed to trim events stream: %v", err)
 			} else {
@@ -101,7 +109,9 @@ func trimStreams(ctx context.Context, config Config) {
 			}
 
 			// Trim jobs stream
-			jobsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Jobs.Name, fmt.Sprintf("%d-0", jobsTrimTime)).Result()
+			jobsTrimID := fmt.Sprintf("%d-0", jobsTrimTime)
+			LogDebug("Attempting to trim jobs stream with ID: %s", jobsTrimID)
+			jobsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Jobs.Name, jobsTrimID).Result()
 			if err != nil {
 				LogError("Failed to trim jobs stream: %v", err)
 			} else {
