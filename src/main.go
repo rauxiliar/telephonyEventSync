@@ -81,7 +81,7 @@ func trimStreams(ctx context.Context, config Config) {
 			return
 		case <-ticker.C:
 			// Get current Redis time
-			timeCmd := rLocal.Time(ctx)
+			timeCmd := rRemote.Time(ctx)
 			if timeCmd.Err() != nil {
 				LogError("Failed to get Redis time: %v", timeCmd.Err())
 				continue
