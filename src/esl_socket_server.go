@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"strconv"
@@ -156,9 +157,16 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		eventMap["body"] = string(evt.Body)
 	}
 
+	// Convert event map to JSON string
+	eventJSON, err := json.Marshal(eventMap)
+	if err != nil {
+		LogError("Failed to marshal event to JSON: %v", err)
+		return
+	}
+
 	// Create the final event structure
 	values := map[string]string{
-		"event": fmt.Sprintf("%v", eventMap),
+		"event": string(eventJSON),
 	}
 
 	msg := message{
