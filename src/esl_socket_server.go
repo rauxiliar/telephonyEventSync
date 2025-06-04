@@ -63,6 +63,9 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				continue
 			}
 
+			// Log raw event for debugging
+			LogDebug("Received ESL event: %+v", evt)
+
 			// Process event
 			processESLEvent(evt, ch, config)
 		}
@@ -76,6 +79,8 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		LogError("Event type not found")
 		return
 	}
+
+	LogDebug("Processing event type: %s", eventType)
 
 	// Extract event timestamp
 	var eventTimestamp int64
