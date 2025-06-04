@@ -12,6 +12,7 @@ import (
 	"maps"
 
 	"github.com/0x19/goesl"
+	"github.com/op/go-logging"
 )
 
 // Event types that should be published to background-jobs stream
@@ -33,6 +34,9 @@ var eslEventsToPush = map[string]bool{
 
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
+
+	// Configure goesl logging to only show errors
+	logging.SetLevel(logging.ERROR, "goesl")
 
 	// Create ESL client
 	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 20)
@@ -61,7 +65,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 		return
 	}
 
-	LogInfo("ESL server started and connected to FreeSWITCH")
+	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
 	// Process events
 	for {
@@ -74,12 +78,10 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 			evt, err := client.ReadMessage()
 			if err != nil {
 				if !isClosedError(err) {
-					LogError("Error reading ESL event: %v", err)
+					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
 				}
 				continue
 			}
-
-			LogInfo("Received event: %+v", evt)
 
 			// Process event
 			processESLEvent(evt, ch, config)
@@ -99,8 +101,6 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		LogError("Event type not found in headers")
 		return
 	}
-
-	LogDebug("Processing event type: %s", eventType)
 
 	// Extract event timestamp
 	var eventTimestamp int64
@@ -123,7 +123,6 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	} else if eslEventsToPush[eventType] {
 		stream = config.Streams.Events.Name
 	} else {
-		LogDebug("Event type %s not in our watch list", eventType)
 		return
 	}
 
