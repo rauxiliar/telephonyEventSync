@@ -64,7 +64,11 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 			}
 
 			// Log raw event for debugging
-			LogDebug("Received ESL event: %+v", evt)
+			LogDebug("Received ESL event type: %T", evt)
+			LogDebug("Received ESL event content: %+v", evt)
+			if evt != nil {
+				LogDebug("Event headers: %+v", evt.Headers)
+			}
 
 			// Process event
 			processESLEvent(evt, ch, config)
@@ -73,10 +77,15 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 }
 
 func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
+	if evt == nil {
+		LogError("Received nil event")
+		return
+	}
+
 	// Extract event type
 	eventType := evt.GetHeader("Event-Name")
 	if eventType == "" {
-		LogError("Event type not found")
+		LogError("Event type not found in headers: %+v", evt.Headers)
 		return
 	}
 
@@ -87,6 +96,8 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
+		} else {
+			LogError("Failed to parse timestamp: %v", err)
 		}
 	}
 
