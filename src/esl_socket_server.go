@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/0x19/goesl"
-	"golang.org/x/exp/maps"
 )
 
 // Event types that should be published to background-jobs stream
@@ -42,8 +43,18 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	// Start handling messages in a goroutine
 	go client.Handle()
 
-	// Subscribe to events
-	if err := client.Send("event plain ALL"); err != nil {
+	// Build event list from our maps
+	var events []string
+	for event := range eslEventsToPublish {
+		events = append(events, event)
+	}
+	for event := range eslEventsToPush {
+		events = append(events, event)
+	}
+
+	// Subscribe to specific events
+	eventCmd := fmt.Sprintf("event plain %s", strings.Join(events, " "))
+	if err := client.Send(eventCmd); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
 	}
@@ -78,16 +89,41 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
+	// Check if this is an event message
+	contentType := evt.GetHeader("Content-Type")
+	if contentType != "text/event-plain" {
+		return
+	}
+
+	// Get event body
+	body := string(evt.Body)
+	if body == "" {
+		LogError("Empty event body")
+		return
+	}
+
+	// Parse event body into headers
+	eventHeaders := make(map[string]string)
+	for _, line := range strings.Split(body, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) == 2 {
+			eventHeaders[parts[0]] = parts[1]
+		}
+	}
+
 	// Extract event type
-	eventType := evt.GetHeader("Event-Name")
+	eventType := eventHeaders["Event-Name"]
 	if eventType == "" {
-		LogError("Event type not found in headers: %+v", evt.Headers)
+		LogError("Event type not found in body")
 		return
 	}
 
 	// Extract event timestamp
 	var eventTimestamp int64
-	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
+	if timestamp := eventHeaders["Event-Date-Timestamp"]; timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
 		}
@@ -98,7 +134,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	if eslEventsToPublish[eventType] {
 		// For BACKGROUND_JOB, check Event-Calling-Function
 		if eventType == "BACKGROUND_JOB" {
-			if callingFunction := evt.GetHeader("Event-Calling-Function"); callingFunction != "api_exec" {
+			if callingFunction := eventHeaders["Event-Calling-Function"]; callingFunction != "api_exec" {
 				return
 			}
 		}
@@ -110,10 +146,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	}
 
 	// Convert event to JSON
-	eventMap := make(map[string]string)
-	maps.Copy(eventMap, evt.Headers)
-
-	eventJSON, err := json.Marshal(eventMap)
+	eventJSON, err := json.Marshal(eventHeaders)
 	if err != nil {
 		LogError("Error serializing event: %v", err)
 		return
