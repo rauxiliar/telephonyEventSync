@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/0x19/goesl"
@@ -30,83 +29,53 @@ var eslEventsToPush = map[string]bool{
 	"CUSTOM":         true,
 }
 
-type ringBuffer struct {
-	buffer     []*goesl.Message
-	size       int
-	head       int
-	tail       int
-	count      int
-	mu         sync.Mutex
-	notEmpty   *sync.Cond
-	notFull    *sync.Cond
-	putCount   atomic.Int64
-	getCount   atomic.Int64
-	putLatency atomic.Int64
-	getLatency atomic.Int64
-}
+func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
+	defer wg.Done()
 
-func newRingBuffer(size int) *ringBuffer {
-	rb := &ringBuffer{
-		buffer: make([]*goesl.Message, size),
-		size:   size,
+	// Configure goesl logging to only show errors
+	logging.SetLevel(logging.ERROR, "goesl")
+
+	// Create ESL client with appropriate timeout
+	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 100)
+	if err != nil {
+		LogError("Failed to create ESL client: %v", err)
+		return
 	}
-	rb.notEmpty = sync.NewCond(&rb.mu)
-	rb.notFull = sync.NewCond(&rb.mu)
-	return rb
-}
+	defer client.Close()
 
-func (rb *ringBuffer) put(event *goesl.Message) {
-	start := time.Now()
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
+	// Start handling messages in a separate goroutine
+	go client.Handle()
 
-	for rb.count == rb.size {
-		rb.notFull.Wait()
+	// Build event list from our maps
+	var events []string
+	for event := range eslEventsToPublish {
+		events = append(events, event)
+	}
+	for event := range eslEventsToPush {
+		events = append(events, event)
 	}
 
-	rb.buffer[rb.tail] = event
-	rb.tail = (rb.tail + 1) % rb.size
-	rb.count++
-	rb.putCount.Add(1)
-	rb.putLatency.Add(time.Since(start).Nanoseconds())
-	rb.notEmpty.Signal()
-}
-
-func (rb *ringBuffer) get() *goesl.Message {
-	start := time.Now()
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	for rb.count == 0 {
-		rb.notEmpty.Wait()
+	// Subscribe to specific events
+	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
+	if err := client.Send(eventCmd); err != nil {
+		LogError("Failed to subscribe to events: %v", err)
+		return
 	}
 
-	event := rb.buffer[rb.head]
-	rb.head = (rb.head + 1) % rb.size
-	rb.count--
-	rb.getCount.Add(1)
-	rb.getLatency.Add(time.Since(start).Nanoseconds())
-	rb.notFull.Signal()
-	return event
-}
+	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
-func (rb *ringBuffer) metrics() string {
-	return fmt.Sprintf("Buffer: %d/%d, Put: %d (%.2fms), Get: %d (%.2fms)",
-		rb.count, rb.size,
-		rb.putCount.Load(),
-		float64(rb.putLatency.Load())/float64(rb.putCount.Load())/1e6,
-		rb.getCount.Load(),
-		float64(rb.getLatency.Load())/float64(rb.getCount.Load())/1e6)
-}
-
-func processEvents(ctx context.Context, rb *ringBuffer, ch chan<- message, config Config) {
+	// Process events
 	for {
 		select {
 		case <-ctx.Done():
+			LogInfo("Stopping ESL server")
 			return
 		default:
-			evt := rb.get()
-			if evt == nil {
+			evt, err := client.ReadMessage()
+			if err != nil {
+				if !isClosedError(err) {
+					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
+				}
 				continue
 			}
 
@@ -177,97 +146,4 @@ func processEvents(ctx context.Context, rb *ringBuffer, ch chan<- message, confi
 			}
 		}
 	}
-}
-
-func readEvents(ctx context.Context, client *goesl.Client, rb *ringBuffer, config Config) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			evt, err := client.ReadMessage()
-			if err != nil {
-				if !isClosedError(err) {
-					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
-				}
-				continue
-			}
-
-			// Get event timestamp immediately after reading
-			if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
-				if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
-					eventTime := time.Unix(0, ts*1000)
-					receiveTime := time.Now()
-					receiveLatency := receiveTime.Sub(eventTime)
-					if receiveLatency > 100*time.Millisecond {
-						LogWarn("High receive latency from FreeSWITCH: %v (Event: %s, Job-UUID: %s, Event-Calling-Function: %s)",
-							receiveLatency,
-							evt.GetHeader("Event-Name"),
-							evt.GetHeader("Job-UUID"),
-							evt.GetHeader("Event-Calling-Function"))
-					}
-				}
-			}
-
-			// Put event in ring buffer
-			rb.put(evt)
-		}
-	}
-}
-
-func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
-	defer wg.Done()
-
-	// Configure goesl logging to only show errors
-	logging.SetLevel(logging.ERROR, "goesl")
-
-	// Create ESL client with appropriate timeout
-	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 100)
-	if err != nil {
-		LogError("Failed to create ESL client: %v", err)
-		return
-	}
-	defer client.Close()
-
-	// Start handling messages in a separate goroutine
-	go client.Handle()
-
-	// Build event list from our maps
-	var events []string
-	for event := range eslEventsToPublish {
-		events = append(events, event)
-	}
-	for event := range eslEventsToPush {
-		events = append(events, event)
-	}
-
-	// Subscribe to specific events
-	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
-	if err := client.Send(eventCmd); err != nil {
-		LogError("Failed to subscribe to events: %v", err)
-		return
-	}
-
-	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
-
-	// Create ring buffer for events with increased size
-	rb := newRingBuffer(5000) // Increased buffer size to 5000 events
-
-	// Start multiple event processors
-	for i := range 3 {
-		go func(workerID int) {
-			processEvents(ctx, rb, ch, config)
-		}(i)
-	}
-
-	// Start multiple event readers
-	for i := range 10 {
-		go func(workerID int) {
-			readEvents(ctx, client, rb, config)
-		}(i)
-	}
-
-	// Wait for context cancellation
-	<-ctx.Done()
-	LogInfo("Stopping ESL server")
 }
