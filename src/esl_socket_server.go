@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fiorix/go-eventsocket/eventsocket"
@@ -30,14 +31,18 @@ var eslEventsToPush = map[string]bool{
 }
 
 type ringBuffer struct {
-	buffer   []*eventsocket.Event
-	size     int
-	head     int
-	tail     int
-	count    int
-	mu       sync.Mutex
-	notEmpty *sync.Cond
-	notFull  *sync.Cond
+	buffer     []*eventsocket.Event
+	size       int
+	head       int
+	tail       int
+	count      int
+	mu         sync.Mutex
+	notEmpty   *sync.Cond
+	notFull    *sync.Cond
+	putCount   atomic.Int64
+	getCount   atomic.Int64
+	putLatency atomic.Int64
+	getLatency atomic.Int64
 }
 
 func newRingBuffer(size int) *ringBuffer {
@@ -51,6 +56,7 @@ func newRingBuffer(size int) *ringBuffer {
 }
 
 func (rb *ringBuffer) put(event *eventsocket.Event) {
+	start := time.Now()
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -61,10 +67,13 @@ func (rb *ringBuffer) put(event *eventsocket.Event) {
 	rb.buffer[rb.tail] = event
 	rb.tail = (rb.tail + 1) % rb.size
 	rb.count++
+	rb.putCount.Add(1)
+	rb.putLatency.Add(time.Since(start).Nanoseconds())
 	rb.notEmpty.Signal()
 }
 
 func (rb *ringBuffer) get() *eventsocket.Event {
+	start := time.Now()
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -75,8 +84,19 @@ func (rb *ringBuffer) get() *eventsocket.Event {
 	event := rb.buffer[rb.head]
 	rb.head = (rb.head + 1) % rb.size
 	rb.count--
+	rb.getCount.Add(1)
+	rb.getLatency.Add(time.Since(start).Nanoseconds())
 	rb.notFull.Signal()
 	return event
+}
+
+func (rb *ringBuffer) metrics() string {
+	return fmt.Sprintf("Buffer: %d/%d, Put: %d (%.2fms), Get: %d (%.2fms)",
+		rb.count, rb.size,
+		rb.putCount.Load(),
+		float64(rb.putLatency.Load())/float64(rb.putCount.Load())/1e6,
+		rb.getCount.Load(),
+		float64(rb.getLatency.Load())/float64(rb.getCount.Load())/1e6)
 }
 
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
@@ -112,6 +132,20 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 	bufferSize := 1000
 	workerCount := 50
 	ring := newRingBuffer(bufferSize)
+
+	// Start metrics goroutine
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				LogInfo("Ring buffer metrics: %s", ring.metrics())
+			}
+		}
+	}()
 
 	// Start workers
 	for i := 0; i < workerCount; i++ {
