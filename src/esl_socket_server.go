@@ -29,6 +29,56 @@ var eslEventsToPush = map[string]bool{
 	"CUSTOM":         true,
 }
 
+type ringBuffer struct {
+	buffer   []*eventsocket.Event
+	size     int
+	head     int
+	tail     int
+	count    int
+	mu       sync.Mutex
+	notEmpty *sync.Cond
+	notFull  *sync.Cond
+}
+
+func newRingBuffer(size int) *ringBuffer {
+	rb := &ringBuffer{
+		buffer: make([]*eventsocket.Event, size),
+		size:   size,
+	}
+	rb.notEmpty = sync.NewCond(&rb.mu)
+	rb.notFull = sync.NewCond(&rb.mu)
+	return rb
+}
+
+func (rb *ringBuffer) put(event *eventsocket.Event) {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	for rb.count == rb.size {
+		rb.notFull.Wait()
+	}
+
+	rb.buffer[rb.tail] = event
+	rb.tail = (rb.tail + 1) % rb.size
+	rb.count++
+	rb.notEmpty.Signal()
+}
+
+func (rb *ringBuffer) get() *eventsocket.Event {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	for rb.count == 0 {
+		rb.notEmpty.Wait()
+	}
+
+	event := rb.buffer[rb.head]
+	rb.head = (rb.head + 1) % rb.size
+	rb.count--
+	rb.notFull.Signal()
+	return event
+}
+
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
@@ -58,6 +108,26 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	LogInfo("ESL server started and connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
+	// Create ring buffer and worker pool
+	bufferSize := 1000
+	workerCount := 50
+	ring := newRingBuffer(bufferSize)
+
+	// Start workers
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					evt := ring.get()
+					processESLEvent(evt, ch, config)
+				}
+			}
+		}()
+	}
+
 	// Process events
 	for {
 		select {
@@ -73,8 +143,8 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 				continue
 			}
 
-			// Process event in a goroutine
-			go processESLEvent(evt, ch, config)
+			// Add to ring buffer
+			ring.put(evt)
 		}
 	}
 }
