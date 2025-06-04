@@ -74,17 +74,32 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 			LogInfo("Stopping ESL server")
 			return
 		default:
-			// Read event
-			evt, err := client.ReadMessage()
-			if err != nil {
+			// Read event with timeout
+			readChan := make(chan *goesl.Message, 1)
+			errChan := make(chan error, 1)
+
+			go func() {
+				evt, err := client.ReadMessage()
+				if err != nil {
+					errChan <- err
+					return
+				}
+				readChan <- evt
+			}()
+
+			select {
+			case err := <-errChan:
 				if !isClosedError(err) {
 					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
 				}
 				continue
+			case evt := <-readChan:
+				// Process event in a separate goroutine
+				go processESLEvent(evt, ch, config)
+			case <-time.After(5 * time.Second):
+				LogWarn("Timeout reading from ESL socket")
+				continue
 			}
-
-			// Process event
-			processESLEvent(evt, ch, config)
 		}
 	}
 }
