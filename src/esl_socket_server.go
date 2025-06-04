@@ -179,6 +179,42 @@ func processEvents(ctx context.Context, rb *ringBuffer, ch chan<- message, confi
 	}
 }
 
+func readEvents(ctx context.Context, client *goesl.Client, rb *ringBuffer, config Config) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			evt, err := client.ReadMessage()
+			if err != nil {
+				if !isClosedError(err) {
+					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
+				}
+				continue
+			}
+
+			// Get event timestamp immediately after reading
+			if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
+				if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+					eventTime := time.Unix(0, ts*1000)
+					receiveTime := time.Now()
+					receiveLatency := receiveTime.Sub(eventTime)
+					if receiveLatency > 100*time.Millisecond {
+						LogWarn("High receive latency from FreeSWITCH: %v (Event: %s, Job-UUID: %s, Event-Calling-Function: %s)",
+							receiveLatency,
+							evt.GetHeader("Event-Name"),
+							evt.GetHeader("Job-UUID"),
+							evt.GetHeader("Event-Calling-Function"))
+					}
+				}
+			}
+
+			// Put event in ring buffer
+			rb.put(evt)
+		}
+	}
+}
+
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
@@ -224,39 +260,14 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 		}(i)
 	}
 
-	// Process events
-	for {
-		select {
-		case <-ctx.Done():
-			LogInfo("Stopping ESL server")
-			return
-		default:
-			evt, err := client.ReadMessage()
-			if err != nil {
-				if !isClosedError(err) {
-					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
-				}
-				continue
-			}
-
-			// Get event timestamp immediately after reading
-			if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
-				if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
-					eventTime := time.Unix(0, ts*1000)
-					receiveTime := time.Now()
-					receiveLatency := receiveTime.Sub(eventTime)
-					if receiveLatency > 100*time.Millisecond {
-						LogWarn("High receive latency from FreeSWITCH: %v (Event: %s, Job-UUID: %s, Event-Calling-Function: %s)",
-							receiveLatency,
-							evt.GetHeader("Event-Name"),
-							evt.GetHeader("Job-UUID"),
-							evt.GetHeader("Event-Calling-Function"))
-					}
-				}
-			}
-
-			// Put event in ring buffer
-			rb.put(evt)
-		}
+	// Start multiple event readers
+	for i := range 10 {
+		go func(workerID int) {
+			readEvents(ctx, client, rb, config)
+		}(i)
 	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	LogInfo("Stopping ESL server")
 }
