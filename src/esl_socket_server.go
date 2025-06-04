@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"maps"
+
 	"github.com/0x19/goesl"
 )
 
@@ -91,44 +93,18 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
-	// Check if this is an event message
-	contentType := evt.GetHeader("Content-Type")
-	if contentType != "text/event-json" {
+	// Get event type directly from headers
+	eventType := evt.GetHeader("Event-Name")
+	if eventType == "" {
+		LogError("Event type not found in headers")
 		return
-	}
-
-	// Get event body
-	body := string(evt.Body)
-	if body == "" {
-		LogError("Empty event body")
-		return
-	}
-
-	LogDebug("Received event body: %s", body)
-
-	// Parse JSON event
-	var eventHeaders map[string]interface{}
-	if err := json.Unmarshal([]byte(body), &eventHeaders); err != nil {
-		LogError("Error parsing JSON event: %v", err)
-		return
-	}
-
-	// Extract event type
-	eventType, ok := eventHeaders["Event-Name"].(string)
-	if !ok {
-		// Try alternative header names
-		eventType, ok = eventHeaders["EventName"].(string)
-		if !ok {
-			LogError("Event type not found in body. Available headers: %v", eventHeaders)
-			return
-		}
 	}
 
 	LogDebug("Processing event type: %s", eventType)
 
 	// Extract event timestamp
 	var eventTimestamp int64
-	if timestamp, ok := eventHeaders["Event-Date-Timestamp"].(string); ok {
+	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
 			eventTimestamp = ts * 1000 // Convert to nanoseconds
 		}
@@ -139,7 +115,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	if eslEventsToPublish[eventType] {
 		// For BACKGROUND_JOB, check Event-Calling-Function
 		if eventType == "BACKGROUND_JOB" {
-			if callingFunction, ok := eventHeaders["Event-Calling-Function"].(string); !ok || callingFunction != "api_exec" {
+			if callingFunction := evt.GetHeader("Event-Calling-Function"); callingFunction != "api_exec" {
 				return
 			}
 		}
@@ -150,6 +126,10 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		LogDebug("Event type %s not in our watch list", eventType)
 		return
 	}
+
+	// Convert all headers to a map
+	eventHeaders := make(map[string]string)
+	maps.Copy(eventHeaders, evt.Headers)
 
 	// Convert event to JSON
 	eventJSON, err := json.Marshal(eventHeaders)
