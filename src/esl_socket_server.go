@@ -162,21 +162,45 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 		}()
 	}
 
+	// Create a channel for reading events
+	readChan := make(chan *eventsocket.Event, bufferSize)
+	errChan := make(chan error, 1)
+
+	// Start reader goroutine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				evt, err := client.ReadEvent()
+				if err != nil {
+					if !isClosedError(err) {
+						errChan <- err
+					}
+					return
+				}
+				select {
+				case readChan <- evt:
+					// Event sent successfully
+				default:
+					// Channel is full, drop event
+					LogError("Read channel is full, dropping event")
+				}
+			}
+		}
+	}()
+
 	// Process events
 	for {
 		select {
 		case <-ctx.Done():
 			LogInfo("Stopping ESL server")
 			return
-		default:
-			evt, err := client.ReadEvent()
-			if err != nil {
-				if !isClosedError(err) {
-					LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
-				}
-				continue
-			}
-
+		case err := <-errChan:
+			LogError("Error reading ESL event: %v (connection to %s:%d)", err, config.ESL.Host, config.ESL.Port)
+			return
+		case evt := <-readChan:
 			// Add to ring buffer
 			ring.put(evt)
 		}
@@ -233,14 +257,8 @@ func processESLEvent(evt *eventsocket.Event, ch chan<- message, config Config) {
 		return
 	}
 
-	// Convert all headers to a map
-	eventHeaders := make(map[string]string)
-	for k := range evt.Header {
-		eventHeaders[k] = evt.Get(k)
-	}
-
-	// Convert event to JSON
-	eventJSON, err := json.Marshal(eventHeaders)
+	// Convert headers to JSON directly without intermediate map
+	eventJSON, err := json.Marshal(evt.Header)
 	if err != nil {
 		LogError("Error serializing event: %v", err)
 		return
