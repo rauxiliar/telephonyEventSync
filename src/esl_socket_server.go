@@ -32,7 +32,7 @@ var eslEventsToPush = map[string]bool{
 func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup, config Config) {
 	defer wg.Done()
 
-	LogDebug("Iniciando conexão ESL com %s:%d", config.ESL.Host, config.ESL.Port)
+	LogInfo("Iniciando conexão ESL com %s:%d", config.ESL.Host, config.ESL.Port)
 
 	// Create ESL client
 	client, err := goesl.NewClient(config.ESL.Host, uint(config.ESL.Port), config.ESL.Password, 20)
@@ -44,7 +44,7 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 
 	// Send auth command first
 	authCmd := fmt.Sprintf("auth %s", config.ESL.Password)
-	LogDebug("Enviando comando de autenticação: %s", authCmd)
+	LogInfo("Enviando comando de autenticação: %s", authCmd)
 	if err := client.Send(authCmd); err != nil {
 		LogError("Failed to authenticate: %v", err)
 		return
@@ -56,11 +56,11 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 		LogError("Failed to read auth response: %v", err)
 		return
 	}
-	LogDebug("Auth response: %+v", authResponse)
+	LogInfo("Auth response: %+v", authResponse)
 
 	// Subscribe to events
 	eventCmd := "event plain ALL"
-	LogDebug("Enviando comando de eventos: %s", eventCmd)
+	LogInfo("Enviando comando de eventos: %s", eventCmd)
 	if err := client.Send(eventCmd); err != nil {
 		LogError("Failed to subscribe to events: %v", err)
 		return
@@ -72,11 +72,11 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 		LogError("Failed to read subscription response: %v", err)
 		return
 	}
-	LogDebug("Subscription response: %+v", subResponse)
+	LogInfo("Subscription response: %+v", subResponse)
 
 	// Send test event
 	testCmd := "event CUSTOM test_event"
-	LogDebug("Enviando evento de teste: %s", testCmd)
+	LogInfo("Enviando evento de teste: %s", testCmd)
 	if err := client.Send(testCmd); err != nil {
 		LogError("Failed to send test event: %v", err)
 	}
@@ -100,10 +100,9 @@ func eslSocketServer(ctx context.Context, ch chan<- message, wg *sync.WaitGroup,
 			}
 
 			// Log raw event for debugging
-			LogDebug("Received ESL event type: %T", evt)
-			LogDebug("Received ESL event content: %+v", evt)
+			LogInfo("Received ESL event type: %T", evt)
 			if evt != nil {
-				LogDebug("Event headers: %+v", evt.Headers)
+				LogInfo("Event headers: %+v", evt.Headers)
 			}
 
 			// Process event
@@ -125,7 +124,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
-	LogDebug("Processing event type: %s", eventType)
+	LogInfo("Processing event type: %s", eventType)
 
 	// Extract event timestamp
 	var eventTimestamp int64
