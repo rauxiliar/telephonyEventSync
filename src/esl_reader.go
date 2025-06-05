@@ -52,6 +52,7 @@ func NewESLClient(config Config) (*ESLClient, error) {
 
 // SetupAndConnect establishes the connection with FreeSWITCH and configures event subscriptions
 func (e *ESLClient) SetupAndConnect() error {
+	LogInfo("Starting ESL client handler")
 	go e.client.Handle()
 
 	var events []string
@@ -63,10 +64,23 @@ func (e *ESLClient) SetupAndConnect() error {
 	}
 
 	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
+	LogInfo("Subscribing to events: %s", eventCmd)
 	if err := e.client.Send(eventCmd); err != nil {
 		return fmt.Errorf("failed to subscribe to events: %v", err)
 	}
 
+	// Verify if the subscription was successful
+	reply, err := e.client.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("failed to read subscription reply: %v", err)
+	}
+
+	replyText := reply.GetHeader("Reply-Text")
+	if !strings.HasPrefix(replyText, "+OK") {
+		return fmt.Errorf("unexpected subscription reply: %s", replyText)
+	}
+
+	LogInfo("Successfully subscribed to events")
 	return nil
 }
 
@@ -208,9 +222,8 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 
 func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	contentType := evt.GetHeader("Content-Type")
-
-	// Ignore messages that are not JSON events
-	if contentType != "text/event-json" {
+	eventType := evt.GetHeader("Event-Name")
+	if contentType == "command/reply" || contentType == "text/disconnect-notice" || eventType == "" {
 		return
 	}
 
@@ -229,8 +242,6 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	}
 
 	var stream string
-	eventType := evt.GetHeader("Event-Name")
-
 	if eslEventsToPublish[eventType] {
 		if eventType == "BACKGROUND_JOB" {
 			if evt.GetHeader("Event-Calling-Function") != "api_exec" {
