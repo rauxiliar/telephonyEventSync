@@ -157,7 +157,7 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 				lastPipelineExec = time.Now()
 				pipe = rRemote.Pipeline() // Create new pipeline after execution
 			}
-			time.Sleep(10 * time.Microsecond)
+			time.Sleep(1 * time.Microsecond) // Sleep to avoid busy-waiting
 		}
 	}
 }

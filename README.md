@@ -4,9 +4,41 @@ High-performance telephony event synchronization service between Redis instances
 
 ## Reading Alternatives
 
-The service supports two different ways to receive events from FreeSWITCH:
+The service supports three different ways to receive events from FreeSWITCH. Each approach has distinct characteristics that should be considered for your specific use case:
 
-### 1. Unix Socket (Recommended for Low Latency)
+### 1. ESL (Event Socket Library) (Recommended)
+
+In this mode, the service connects directly to FreeSWITCH using the Event Socket Library (ESL). This provides the most efficient and reliable connection to FreeSWITCH events, offering:
+
+**Technical Characteristics:**
+
+- Direct TCP connection to FreeSWITCH (port 8021)
+- Native FreeSWITCH event format
+- Automatic reconnection handling
+- Real-time event delivery
+- No intermediate storage
+
+```mermaid
+sequenceDiagram
+    participant FS as FreeSWITCH
+    participant TES as Telephony Event Sync
+    participant RR as Remote Redis
+
+    FS->>TES: ESL Connection
+    TES->>TES: Process Event
+    TES->>RR: XADD Pipeline
+```
+
+**Configuration Requirements:**
+
+```env
+READER_TYPE=esl
+ESL_HOST=localhost
+ESL_PORT=8021
+ESL_PASSWORD=ClueCon
+```
+
+### 2. Unix Socket
 
 In this mode, FreeSWITCH writes events directly to a Unix socket, which are then read by the service. This provides the lowest possible latency as it eliminates the Redis local step.
 
@@ -21,7 +53,15 @@ sequenceDiagram
     TES->>RR: XADD Pipeline
 ```
 
-Required configuration:
+**Technical Characteristics:**
+
+- Unix domain socket communication
+- Custom event format
+- File system based communication
+- No network overhead
+- Requires FreeSWITCH Lua script
+
+**Configuration Requirements:**
 
 ```env
 READER_TYPE=unix
@@ -44,9 +84,9 @@ FreeSWITCH configuration (in `lua.conf.xml`):
 <!-- GO CONTACT EVENTS -->
 ```
 
-### 2. Redis Local
+### 3. Redis Local
 
-In this mode, FreeSWITCH writes events to a local Redis instance, which are then read by the service using Redis Streams.
+In this mode, FreeSWITCH writes events to a local Redis instance, which are then read by the service using Redis Streams. This mode is ideal for high-throughput scenarios where event ordering is critical.
 
 ```mermaid
 sequenceDiagram
@@ -62,7 +102,15 @@ sequenceDiagram
     TES->>LR: XAck
 ```
 
-Required configuration:
+**Technical Characteristics:**
+
+- Redis Streams based communication
+- JSON event format
+- Persistent storage
+- Consumer group support
+- Batch processing capability
+
+**Configuration Requirements:**
 
 ```env
 READER_TYPE=redis
@@ -88,6 +136,7 @@ flowchart LR
         subgraph Readers
             USR[Unix Socket Reader]
             RDR[Redis Reader]
+            ESR[ESL Reader]
         end
         WRT[Writer]
         MM[Monitoring & Management]
@@ -104,9 +153,14 @@ flowchart LR
     FS -- "Unix Socket" --> USR
     USR -- "Process" --> WRT
 
+    %% Alternative: ESL Connection
+    FS -- "ESL Connection" --> ESR
+    ESR -- "Process" --> WRT
+
     %% Monitoring
     MM -- "Monitors" --> USR
     MM -- "Monitors" --> RDR
+    MM -- "Monitors" --> ESR
     MM -- "Monitors" --> WRT
     MM -- "Removes Consumers on Shutdown" --> LR
 ```
@@ -120,12 +174,17 @@ sequenceDiagram
     participant TES as Telephony Event Sync
     participant RR as Remote Redis
 
-    Note over FS,TES: Option 1: Unix Socket
+    Note over FS,TES: Option 1: ESL
+    FS->>TES: ESL Connection
+    TES->>TES: Process Event
+    TES->>RR: XADD Pipeline
+
+    Note over FS,TES: Option 2: Unix Socket
     FS->>TES: Unix Socket Event
     TES->>TES: Process Event
     TES->>RR: XADD Pipeline
 
-    Note over FS,LR: Option 2: Redis
+    Note over FS,LR: Option 3: Redis
     FS->>LR: XADD Event
     LR->>TES: XReadGroup
     TES->>TES: Process Batch
@@ -149,16 +208,41 @@ graph TD
 
 ## Features
 
-- Real-time FreeSWITCH event synchronization between Redis instances
-- Support for both Redis and Unix Socket event sources
-- Low-latency event processing with batch optimization
-- Parallel processing with multiple writer workers
+### Event Reading
+
+- ESL (Event Socket Library) direct connection
+- Unix Socket communication
+- Redis Streams consumer groups
+- Automatic reconnection handling
+- Event filtering capabilities
+- Batch processing support
+
+### Event Processing
+
+- Low-latency event processing
+- Parallel processing with multiple workers
 - Comprehensive latency monitoring
-- Automatic consumer cleanup on service shutdown
-- Health checks and metrics
-- Graceful shutdown
 - Protection against overload
 - Automatic stream trimming
+- Event ordering preservation
+
+### Data Management
+
+- Real-time event synchronization
+- Consumer group tracking
+- Event persistence (Redis mode)
+- Automatic cleanup on shutdown
+- Stream length management
+- Data loss prevention
+
+### Monitoring & Management
+
+- Health checks and metrics
+- Latency monitoring
+- Error tracking
+- Resource usage metrics
+- Graceful shutdown
+- Consumer lifecycle management (Redis mode)
 
 ## Requirements
 
@@ -173,11 +257,16 @@ The service is configured through environment variables:
 ### Reader Configuration
 
 ```env
-# Choose between "redis" or "unix" (default: "redis")
-READER_TYPE=redis
+# Choose between "redis", "unix", or "esl" (default: "esl")
+READER_TYPE=esl
 
 # Unix Socket configuration (only used when READER_TYPE=unix)
 UNIX_SOCKET_PATH=/var/run/telephony/telephony.sock  # Unix socket path
+
+# ESL configuration (only used when READER_TYPE=esl)
+ESL_HOST=localhost                # FreeSWITCH ESL host
+ESL_PORT=8021                    # FreeSWITCH ESL port
+ESL_PASSWORD=ClueCon            # FreeSWITCH ESL password
 ```
 
 ### Redis Local Configuration (only used when READER_TYPE=redis)
@@ -275,14 +364,33 @@ HTTP endpoint for health verification:
 GET /health
 ```
 
-Response:
+Response (when healthy):
 
 ```json
 {
     "status": "healthy",
-    "last_sync": "2024-03-21T10:00:00Z",
-    "queue_size": 0,
-    "errors": 0
+    "data": {
+        "last_heartbeat": "2024-03-21T10:00:00Z",
+        "last_error": null,
+        "recovery_attempts": 0,
+        "is_healthy": true,
+        "last_check": "2024-03-21T10:00:00Z"
+    }
+}
+```
+
+Response (when unhealthy):
+
+```json
+{
+    "status": "unhealthy",
+    "data": {
+        "last_heartbeat": "2024-03-21T10:00:00Z",
+        "last_error": "connection timeout",
+        "recovery_attempts": 3,
+        "is_healthy": false,
+        "last_check": "2024-03-21T10:00:00Z"
+    }
 }
 ```
 

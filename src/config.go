@@ -135,7 +135,7 @@ func getConfig() Config {
 	}
 
 	// Reader Type
-	config.Reader.Type = getEnv("READER_TYPE", "redis")
+	config.Reader.Type = getEnv("READER_TYPE", "esl")
 
 	// Unix Socket Configuration
 	config.Unix.SocketPath = getEnv("UNIX_SOCKET_PATH", "/var/run/telephony/telephony.sock")
@@ -158,7 +158,7 @@ func getConfig() Config {
 	config.Redis.Remote.Password = getEnv("REDIS_REMOTE_PASSWORD", "")
 	config.Redis.Remote.DB = getEnvAsInt("REDIS_REMOTE_DB", 2)
 	config.Redis.Remote.PoolSize = getEnvAsInt("REDIS_REMOTE_POOL_SIZE", 100)
-	config.Redis.Remote.MinIdleConns = getEnvAsInt("REDIS_REMOTE_MIN_IDLE_CONNS", 10)
+	config.Redis.Remote.MinIdleConns = getEnvAsInt("REDIS_REMOTE_MIN_IDLE_CONNS", 20)
 	config.Redis.Remote.MaxRetries = getEnvAsInt("REDIS_REMOTE_MAX_RETRIES", 3)
 
 	// Redis Consumer Group
@@ -188,10 +188,10 @@ func getConfig() Config {
 	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", 20)
 	config.Processing.WriterMaxLatency = getEnvAsDuration("WRITER_MAX_LATENCY", 100*time.Millisecond)
 	config.Processing.WriterPipelineTimeout = getEnvAsDuration("WRITER_PIPELINE_TIMEOUT", 25*time.Millisecond)
-	config.Processing.WriterWorkers = getEnvAsInt("WRITER_WORKERS", 10)
+	config.Processing.WriterWorkers = getEnvAsInt("WRITER_WORKERS", 20)
 
 	// Processing - Buffer
-	config.Processing.BufferSize = getEnvAsInt("BUFFER_SIZE", 100000)
+	config.Processing.BufferSize = getEnvAsInt("BUFFER_SIZE", 50000)
 
 	// Processing - Total Max Latency
 	config.Processing.TotalMaxLatency = getEnvAsDuration("TOTAL_MAX_LATENCY", 1000*time.Millisecond)
