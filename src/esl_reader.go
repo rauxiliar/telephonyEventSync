@@ -111,7 +111,7 @@ func (e *ESLClient) ReadEvents(ctx context.Context, eventsChan chan<- *goesl.Mes
 
 				// Check for disconnect notice
 				if evt.GetHeader("Content-Type") == "text/disconnect-notice" {
-					LogInfo("Received disconnect notice from FreeSWITCH: %s", string(evt.Body))
+					LogWarn("Received disconnect notice from FreeSWITCH: %s", string(evt.Body))
 					return
 				}
 
@@ -221,12 +221,6 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 }
 
 func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
-	contentType := evt.GetHeader("Content-Type")
-	eventType := evt.GetHeader("Event-Name")
-	if contentType == "command/reply" || contentType == "text/disconnect-notice" || eventType == "" {
-		return
-	}
-
 	var eventTimestamp int64
 	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
@@ -241,6 +235,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		LogWarn("High reader latency since event trigger detected for ESL socket message: %v", readerLatency)
 	}
 
+	eventType := evt.GetHeader("Event-Name")
 	var stream string
 	if eslEventsToPublish[eventType] {
 		if eventType == "BACKGROUND_JOB" {
