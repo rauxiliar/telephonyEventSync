@@ -269,6 +269,22 @@ ESL_PORT=8021                    # FreeSWITCH ESL port
 ESL_PASSWORD=ClueCon            # FreeSWITCH ESL password
 ```
 
+FreeSWITCH configuration (in `lua.conf.xml`) can be commented or removed since with this solution the scripts are not longer needed:
+
+```xml
+<!-- GO CONTACT EVENTS -->
+<!-- <hook event="BACKGROUND_JOB" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="CHANNEL_EXECUTE" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="CHANNEL_EXECUTE_COMPLETE" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="CHANNEL_ANSWER" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="CHANNEL_HANGUP" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="DTMF" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="DETECTED_SPEECH" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="CUSTOM" subclass="fscontact::inbound" script="gocontact-event-publisher.lua"/> -->
+<!-- <hook event="CUSTOM" subclass="fscloud-tone-detection" script="gocontact-event-publisher.lua"/> -->
+<!-- GO CONTACT EVENTS -->
+```
+
 ### Redis Local Configuration (only used when READER_TYPE=redis)
 
 ```env
