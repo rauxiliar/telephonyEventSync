@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,6 +49,8 @@ const (
 	DefaultTotalMaxLatency       = 500 * time.Millisecond
 	DefaultTrimInterval          = 10 * time.Second
 	DefaultReaderBlockTime       = 10 * time.Millisecond
+	DefaultEventsToPublish       = "BACKGROUND_JOB,CHANNEL_EXECUTE,CHANNEL_EXECUTE_COMPLETE,DTMF,DETECTED_SPEECH"
+	DefaultEventsToPush          = "CHANNEL_ANSWER,CHANNEL_HANGUP,DTMF,CUSTOM"
 
 	// Stream defaults
 	DefaultStreamEventsName = "freeswitch:telephony:events"
@@ -113,6 +116,10 @@ type Config struct {
 
 		// Trim interval
 		TrimInterval time.Duration
+
+		// ESL events configuration
+		EventsToPublish []string
+		EventsToPush    []string
 	}
 	Health struct {
 		CheckInterval time.Duration
@@ -240,6 +247,10 @@ func getConfig() Config {
 	// Processing - Trim Interval
 	config.Processing.TrimInterval = getEnvAsDuration("TRIM_INTERVAL", DefaultTrimInterval)
 
+	// Processing - ESL Events
+	config.Processing.EventsToPublish = getEnvAsStringSlice("EVENTS_TO_PUBLISH", DefaultEventsToPublish)
+	config.Processing.EventsToPush = getEnvAsStringSlice("EVENTS_TO_PUSH", DefaultEventsToPush)
+
 	// Health
 	config.Health.CheckInterval = getEnvAsDuration("HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval)
 	config.Health.MaxRetries = getEnvAsInt("HEALTH_MAX_RETRIES", DefaultHealthMaxRetries)
@@ -290,6 +301,13 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvAsStringSlice(key string, defaultValue string) []string {
+	if value := os.Getenv(key); value != "" {
+		return strings.Split(value, ",")
+	}
+	return strings.Split(defaultValue, ",")
 }
 
 // GetESLHealthCheckTimeout returns the ESL health check timeout with fallback

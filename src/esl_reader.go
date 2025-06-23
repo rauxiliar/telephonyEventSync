@@ -21,23 +21,6 @@ var (
 	eslRecoveryChan = make(chan struct{}, 1) // Recovery channel, buffer 1 to avoid blocking
 )
 
-// Event types that should be published to background-jobs stream
-var eslEventsToPublish = map[string]bool{
-	"BACKGROUND_JOB":           true,
-	"CHANNEL_EXECUTE":          true,
-	"CHANNEL_EXECUTE_COMPLETE": true,
-	"DTMF":                     true,
-	"DETECTED_SPEECH":          true,
-}
-
-// Event types that should be pushed to events stream
-var eslEventsToPush = map[string]bool{
-	"CHANNEL_ANSWER": true,
-	"CHANNEL_HANGUP": true,
-	"DTMF":           true,
-	"CUSTOM":         true,
-}
-
 // ESLClient represents an ESL connection to FreeSWITCH
 type ESLClient struct {
 	client *goesl.Client
@@ -63,10 +46,12 @@ func (e *ESLClient) SetupAndConnect() error {
 	go e.client.Handle()
 
 	var events []string
-	for event := range eslEventsToPublish {
+	// Add events to publish
+	for _, event := range e.config.Processing.EventsToPublish {
 		events = append(events, event)
 	}
-	for event := range eslEventsToPush {
+	// Add events to push
+	for _, event := range e.config.Processing.EventsToPush {
 		events = append(events, event)
 	}
 
@@ -273,14 +258,14 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	})
 
 	var stream string
-	if eslEventsToPublish[eventType] {
+	if isEventToPublish(eventType, config) {
 		if eventType == "BACKGROUND_JOB" {
 			if evt.GetHeader("Event-Calling-Function") != "api_exec" {
 				return
 			}
 		}
 		stream = config.Streams.Jobs.Name
-	} else if eslEventsToPush[eventType] {
+	} else if isEventToPush(eventType, config) {
 		stream = config.Streams.Events.Name
 	} else {
 		return
@@ -345,4 +330,23 @@ func setGlobalESLClient(client *ESLClient) {
 	eslClientMutex.Lock()
 	defer eslClientMutex.Unlock()
 	globalESLClient = client
+}
+
+// Helper functions to check if event should be published/pushed
+func isEventToPublish(eventType string, config Config) bool {
+	for _, event := range config.Processing.EventsToPublish {
+		if event == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func isEventToPush(eventType string, config Config) bool {
+	for _, event := range config.Processing.EventsToPush {
+		if event == eventType {
+			return true
+		}
+	}
+	return false
 }

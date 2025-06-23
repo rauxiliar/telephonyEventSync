@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
-
-	"maps"
 
 	"github.com/op/go-logging"
 )
@@ -140,20 +139,15 @@ func LogDebug(format string, args ...interface{}) {
 
 // LogWithContext logs a message with additional context fields
 func LogWithContext(level logging.Level, message string, fields map[string]any) {
-	// Create structured log entry
-	entry := map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339),
-		"level":     level.String(),
-		"message":   message,
-	}
-
-	// Add context fields
-	maps.Copy(entry, fields)
-
 	// Convert to JSON-like format for logging
-	logEntry := fmt.Sprintf("[%s] %s: %s", level.String(), time.Now().Format("2006-01-02 15:04:05"), message)
+	logEntry := message
 	if len(fields) > 0 {
-		logEntry += fmt.Sprintf(" | Context: %+v", fields)
+		// Format fields in a cleaner way
+		var fieldPairs []string
+		for k, v := range fields {
+			fieldPairs = append(fieldPairs, fmt.Sprintf("%s:%v", k, v))
+		}
+		logEntry += fmt.Sprintf(" | Context: %s", strings.Join(fieldPairs, " "))
 	}
 
 	switch level {
