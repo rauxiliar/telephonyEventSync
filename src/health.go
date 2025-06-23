@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0x19/goesl"
 	"github.com/redis/go-redis/v9"
 )
 
 type HealthStatus struct {
 	sync.RWMutex
-	lastHeartbeat    time.Time
 	lastError        error
 	recoveryAttempts int
 	isHealthy        bool
@@ -19,52 +19,28 @@ type HealthStatus struct {
 }
 
 type HealthMonitor struct {
-	status          *HealthStatus
-	checkInterval   time.Duration
-	recoveryTimeout time.Duration
-	maxRetries      int
-	ctx             context.Context
-	cancel          context.CancelFunc
-	config          Config
-	localClient     *redis.Client
-	remoteClient    *redis.Client
+	status     *HealthStatus
+	maxRetries int
+	ctx        context.Context
+	cancel     context.CancelFunc
+	config     Config
+	ticker     *time.Ticker
 }
 
 func NewHealthMonitor(config Config) *HealthMonitor {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	localClient := redis.NewClient(&redis.Options{
-		Addr:         config.Redis.Local.Address,
-		Password:     config.Redis.Local.Password,
-		DB:           config.Redis.Local.DB,
-		PoolSize:     config.Redis.Local.PoolSize,
-		MinIdleConns: config.Redis.Local.MinIdleConns,
-		MaxRetries:   config.Redis.Local.MaxRetries,
-	})
-
-	remoteClient := redis.NewClient(&redis.Options{
-		Addr:         config.Redis.Remote.Address,
-		Password:     config.Redis.Remote.Password,
-		DB:           config.Redis.Remote.DB,
-		PoolSize:     config.Redis.Remote.PoolSize,
-		MinIdleConns: config.Redis.Remote.MinIdleConns,
-		MaxRetries:   config.Redis.Remote.MaxRetries,
-	})
-
 	return &HealthMonitor{
-		ctx:             ctx,
-		cancel:          cancel,
-		config:          config,
-		localClient:     localClient,
-		remoteClient:    remoteClient,
-		checkInterval:   config.Health.CheckInterval,
-		recoveryTimeout: config.Health.RecoveryTimeout,
+		ctx:    ctx,
+		cancel: cancel,
+		config: config,
 		status: &HealthStatus{
 			isHealthy:        true,
 			lastCheck:        time.Now(),
 			recoveryAttempts: 0,
 		},
-		maxRetries: config.Health.MaxRetries,
+		maxRetries: config.GetHealthMaxRetries(),
+		ticker:     time.NewTicker(config.GetHealthCheckInterval()),
 	}
 }
 
@@ -77,78 +53,84 @@ func (hm *HealthMonitor) Stop() {
 }
 
 func (hm *HealthMonitor) monitor() {
-	ticker := time.NewTicker(hm.checkInterval)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-hm.ctx.Done():
 			return
-		case <-ticker.C:
-			hm.checkHealth()
+		case <-hm.ticker.C:
+			hm.performHealthCheck()
 		}
 	}
 }
 
-func (hm *HealthMonitor) checkHealth() {
-	hm.status.Lock()
-	defer hm.status.Unlock()
-
+func (hm *HealthMonitor) performHealthCheck() {
 	// Check Redis connections
 	if !hm.checkRedisConnections() {
-		hm.status.lastError = fmt.Errorf("Redis connections failed")
+		hm.status.Lock()
+		hm.status.lastError = fmt.Errorf("redis connection failed")
 		hm.status.isHealthy = false
 		hm.status.recoveryAttempts++
+		recoveryAttempts := hm.status.recoveryAttempts
+		hm.status.Unlock()
 
 		LogError("Unhealthy state detected: %v", hm.status.lastError)
 
-		if hm.status.recoveryAttempts <= hm.maxRetries {
-			go hm.attemptRecovery()
+		if recoveryAttempts <= hm.maxRetries {
+			go hm.attemptRedisRecovery()
 		} else {
 			LogError("Max recovery attempts reached. Manual intervention required.")
 		}
 		return
 	}
 
-	// Update heartbeat
-	hm.status.lastHeartbeat = time.Now()
+	// Check ESL connection
+	if !hm.checkESLConnection() {
+		hm.status.Lock()
+		hm.status.lastError = fmt.Errorf("ESL connection failed")
+		hm.status.isHealthy = false
+		hm.status.recoveryAttempts++
+		recoveryAttempts := hm.status.recoveryAttempts
+		hm.status.Unlock()
+
+		LogError("Unhealthy state detected: %v", hm.status.lastError)
+
+		if recoveryAttempts <= hm.maxRetries {
+			go hm.attemptESLRecovery()
+		} else {
+			LogError("Max recovery attempts reached. Manual intervention required.")
+		}
+		return
+	}
+
+	// Reset status on successful health check
+	hm.status.Lock()
 	hm.status.isHealthy = true
-	hm.status.recoveryAttempts = 0
 	hm.status.lastError = nil
+	hm.status.recoveryAttempts = 0
+	hm.status.lastCheck = time.Now()
+	hm.status.Unlock()
+
+	LogDebug("Health check passed")
 }
 
 func (hm *HealthMonitor) checkRedisConnections() bool {
-	ctx := context.Background()
+	// Use shorter timeout for faster failure detection
+	ctx, cancel := context.WithTimeout(context.Background(), hm.config.Redis.Remote.DialTimeout)
+	defer cancel()
 
-	// Check local Redis
-	localAddr := hm.config.Redis.Local.Address
-	if err := hm.localClient.Ping(ctx).Err(); err != nil {
-		LogError("Local Redis connection failed (%s): %v", localAddr, err)
-		return false
-	}
-
-	// Check remote Redis
+	// Check health monitor Redis client
 	remoteAddr := hm.config.Redis.Remote.Address
-	if err := hm.remoteClient.Ping(ctx).Err(); err != nil {
-		LogError("Remote Redis connection failed (%s): %v", remoteAddr, err)
+	if err := rRemote.Ping(ctx).Err(); err != nil {
+		LogError("Redis connection failed (%s): %v", remoteAddr, err)
 		return false
 	}
 
+	LogDebug("Redis health check passed")
 	return true
 }
 
-func (hm *HealthMonitor) attemptRecovery() {
-	LogInfo("Starting recovery attempt %d", hm.status.recoveryAttempts)
-
-	// Create new Redis clients
-	newLocal := redis.NewClient(&redis.Options{
-		Addr:         hm.config.Redis.Local.Address,
-		Password:     hm.config.Redis.Local.Password,
-		DB:           hm.config.Redis.Local.DB,
-		PoolSize:     hm.config.Redis.Local.PoolSize,
-		MinIdleConns: hm.config.Redis.Local.MinIdleConns,
-		MaxRetries:   hm.config.Redis.Local.MaxRetries,
-	})
+func (hm *HealthMonitor) attemptRedisRecovery() {
+	LogInfo("Starting Redis recovery attempt %d", hm.status.recoveryAttempts)
 
 	newRemote := redis.NewClient(&redis.Options{
 		Addr:         hm.config.Redis.Remote.Address,
@@ -157,31 +139,148 @@ func (hm *HealthMonitor) attemptRecovery() {
 		PoolSize:     hm.config.Redis.Remote.PoolSize,
 		MinIdleConns: hm.config.Redis.Remote.MinIdleConns,
 		MaxRetries:   hm.config.Redis.Remote.MaxRetries,
+		// Use configured timeouts for recovery
+		DialTimeout:  hm.config.Redis.Remote.DialTimeout,
+		WriteTimeout: hm.config.Redis.Remote.WriteTimeout,
+		PoolTimeout:  hm.config.Redis.Remote.PoolTimeout,
 	})
 
-	// Test new connections
-	if err := newLocal.Ping(hm.ctx).Err(); err != nil {
-		LogError("Failed to establish new local Redis connection: %v", err)
-		return
-	}
+	// Test new connections with timeout
+	ctx, cancel := context.WithTimeout(hm.ctx, hm.config.Redis.Remote.DialTimeout)
+	defer cancel()
 
-	if err := newRemote.Ping(hm.ctx).Err(); err != nil {
+	if err := newRemote.Ping(ctx).Err(); err != nil {
 		LogError("Failed to establish new remote Redis connection: %v", err)
 		return
 	}
 
-	// Replace old clients with new ones
-	oldLocal := hm.localClient
-	oldRemote := hm.remoteClient
-
-	hm.localClient = newLocal
-	hm.remoteClient = newRemote
+	// Replace global Redis client (synchronize with main system)
+	oldGlobalRemote := rRemote
+	rRemote = newRemote
 
 	// Close old connections
-	oldLocal.Close()
-	oldRemote.Close()
+	if oldGlobalRemote != nil {
+		oldGlobalRemote.Close()
+	}
 
 	LogInfo("Successfully reconnected to Redis instances")
+}
+
+func (hm *HealthMonitor) checkESLConnection() bool {
+	// Check main system ESL client
+	mainESLClient := GetESLClient()
+	if mainESLClient == nil {
+		LogError("Main system ESL client is nil")
+		return false
+	}
+
+	// Test ESL client
+	ctx, cancel := context.WithTimeout(context.Background(), hm.config.GetESLHealthCheckTimeout())
+	defer cancel()
+
+	// Send uptime command and read response with timeout
+	responseChan := make(chan *goesl.Message, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		// Send command
+		if err := mainESLClient.client.Send("uptime"); err != nil {
+			errChan <- err
+			return
+		}
+
+		// Read response
+		response, err := mainESLClient.client.ReadMessage()
+		if err != nil {
+			errChan <- err
+			return
+		}
+		responseChan <- response
+	}()
+
+	select {
+	case <-ctx.Done():
+		LogError("ESL uptime timeout after %v", hm.config.GetESLHealthCheckTimeout())
+		return false
+	case err := <-errChan:
+		LogError("ESL uptime failed: %v", err)
+		return false
+	case response := <-responseChan:
+		// Verify response is valid
+		replyText := response.GetHeader("Reply-Text")
+		if replyText == "" {
+			LogError("ESL uptime response is empty")
+			return false
+		}
+
+		LogDebug("ESL health check passed, uptime: %s", replyText)
+		return true
+	}
+}
+
+func (hm *HealthMonitor) attemptESLRecovery() {
+	LogInfo("Starting ESL recovery attempt %d", hm.status.recoveryAttempts)
+
+	// Create new ESL client
+	newESLClient, err := NewESLClient(hm.config)
+	if err != nil {
+		LogError("Failed to create new ESL client: %v", err)
+		return
+	}
+
+	// Test new connection with uptime command and timeout
+	ctx, cancel := context.WithTimeout(hm.ctx, hm.config.GetESLHealthCheckTimeout())
+	defer cancel()
+
+	// Test new connection with uptime command
+	if err := newESLClient.client.Send("uptime"); err != nil {
+		LogError("Failed to send uptime to new ESL client: %v", err)
+		newESLClient.Close()
+		return
+	}
+
+	// Read response with timeout
+	responseChan := make(chan *goesl.Message, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		response, err := newESLClient.client.ReadMessage()
+		if err != nil {
+			errChan <- err
+			return
+		}
+		responseChan <- response
+	}()
+
+	select {
+	case <-ctx.Done():
+		LogError("ESL recovery timeout after %v", hm.config.GetESLHealthCheckTimeout())
+		newESLClient.Close()
+		return
+	case err := <-errChan:
+		LogError("Failed to read uptime response from new ESL client: %v", err)
+		newESLClient.Close()
+		return
+	case response := <-responseChan:
+		// Verify response is valid
+		replyText := response.GetHeader("Reply-Text")
+		if replyText == "" {
+			LogError("New ESL client uptime response is empty")
+			newESLClient.Close()
+			return
+		}
+
+		// Replace global ESL client (synchronize with main system)
+		oldGlobalClient := GetESLClient()
+		setGlobalESLClient(newESLClient)
+
+		// Close old client
+		if oldGlobalClient != nil {
+			oldGlobalClient.Close()
+		}
+
+		LogInfo("Successfully reconnected to ESL, uptime: %s", replyText)
+	}
 }
 
 func (hm *HealthMonitor) IsHealthy() bool {
@@ -196,7 +295,7 @@ func (hm *HealthMonitor) GetStatus() map[string]any {
 
 	return map[string]any{
 		"is_healthy":        hm.status.isHealthy,
-		"last_heartbeat":    hm.status.lastHeartbeat,
+		"last_check":        hm.status.lastCheck,
 		"last_error":        hm.status.lastError,
 		"recovery_attempts": hm.status.recoveryAttempts,
 	}

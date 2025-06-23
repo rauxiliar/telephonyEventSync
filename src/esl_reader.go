@@ -14,6 +14,13 @@ import (
 	"github.com/op/go-logging"
 )
 
+// Global ESL client for health monitoring
+var (
+	globalESLClient *ESLClient
+	eslClientMutex  sync.RWMutex
+	eslRecoveryChan = make(chan struct{}, 1) // Recovery channel, buffer 1 to avoid blocking
+)
+
 // Event types that should be published to background-jobs stream
 var eslEventsToPublish = map[string]bool{
 	"BACKGROUND_JOB":           true,
@@ -92,8 +99,9 @@ func (e *ESLClient) Close() {
 }
 
 // ReadEvents starts reading events from FreeSWITCH
-func (e *ESLClient) ReadEvents(ctx context.Context, eventsChan chan<- *goesl.Message) {
+func (e *ESLClient) ReadEvents(ctx context.Context, eventsChan chan<- *goesl.Message, recoveryChan <-chan struct{}) {
 	readDone := make(chan struct{})
+
 	go func() {
 		defer close(readDone)
 		for {
@@ -102,6 +110,7 @@ func (e *ESLClient) ReadEvents(ctx context.Context, eventsChan chan<- *goesl.Mes
 				return
 			default:
 				evt, err := e.client.ReadMessage()
+
 				if err != nil {
 					if !isClosedError(err) {
 						LogError("Error reading ESL event: %v (connection to %s:%d)", err, e.config.ESL.Host, e.config.ESL.Port)
@@ -115,11 +124,7 @@ func (e *ESLClient) ReadEvents(ctx context.Context, eventsChan chan<- *goesl.Mes
 					return
 				}
 
-				select {
-				case eventsChan <- evt:
-				default:
-					LogWarn("ESL events channel full, event dropped")
-				}
+				eventsChan <- evt
 			}
 		}
 	}()
@@ -146,7 +151,8 @@ func StartWorkers(ctx context.Context, eventsChan <-chan *goesl.Message, outputC
 
 // StartMetricsUpdater starts the periodic metrics update
 func StartMetricsUpdater(ctx context.Context, eventsChan chan *goesl.Message) {
-	metricsUpdateTicker := time.NewTicker(1 * time.Second)
+	config := getConfig()
+	metricsUpdateTicker := time.NewTicker(config.GetMetricsUpdateInterval())
 	defer metricsUpdateTicker.Stop()
 
 	for {
@@ -154,9 +160,8 @@ func StartMetricsUpdater(ctx context.Context, eventsChan chan *goesl.Message) {
 		case <-ctx.Done():
 			return
 		case <-metricsUpdateTicker.C:
-			metrics.Lock()
-			metrics.readerChannelSize = len(eventsChan)
-			metrics.Unlock()
+			metricsManager := GetMetricsManager()
+			metricsManager.SetReaderChannelSize(len(eventsChan))
 		}
 	}
 }
@@ -167,8 +172,10 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 
 	logging.SetLevel(logging.ERROR, "goesl")
 
-	reconnectDelay := 5 * time.Second
-	maxReconnectDelay := 30 * time.Second
+	// Fast recovery settings from config
+	reconnectDelay := config.GetESLReconnectDelay()
+	maxReconnectDelay := config.GetESLMaxReconnectDelay()
+	connectionAttempts := 0
 
 	// Create events channel
 	eslEventsChan := make(chan *goesl.Message, config.Processing.BufferSize)
@@ -187,6 +194,9 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 			workerWg.Wait()
 			return
 		default:
+			connectionAttempts++
+			LogInfo("Attempting to connect to FreeSWITCH (attempt %d) at %s:%d", connectionAttempts, config.ESL.Host, config.ESL.Port)
+
 			client, err := NewESLClient(config)
 			if err != nil {
 				LogError("Failed to create ESL client: %v", err)
@@ -197,22 +207,37 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 				continue
 			}
 
-			// Reset reconnect delay on successful connection
-			reconnectDelay = 5 * time.Second
-
 			if err := client.SetupAndConnect(); err != nil {
 				LogError("Failed to connect: %v", err)
 				client.Close()
 				time.Sleep(reconnectDelay)
+				if reconnectDelay < maxReconnectDelay {
+					reconnectDelay *= 2
+				}
 				continue
 			}
+
+			// Set global ESL client for health monitoring
+			setGlobalESLClient(client)
+
+			// Update metrics before resetting connectionAttempts
+			metricsManager := GetMetricsManager()
+			metricsManager.IncrementESLConnections()
+			if connectionAttempts > 1 {
+				metricsManager.IncrementESLReconnections()
+			}
+
+			// Reset reconnect delay on successful connection
+			reconnectDelay = config.GetESLReconnectDelay()
+			connectionAttempts = 0
 
 			LogInfo("Successfully connected to FreeSWITCH at %s:%d", config.ESL.Host, config.ESL.Port)
 
 			// Start reading events and forward them to the events channel
-			client.ReadEvents(ctx, eslEventsChan)
+			client.ReadEvents(ctx, eslEventsChan, eslRecoveryChan)
 
 			// If we get here, the connection was lost
+			setGlobalESLClient(nil) // Clear global client
 			client.Close()
 			LogInfo("ESL connection lost, attempting to reconnect in %v...", reconnectDelay)
 			time.Sleep(reconnectDelay)
@@ -231,11 +256,22 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	readTime := time.Now()
 	eventTime := time.Unix(0, eventTimestamp)
 	readerLatency := readTime.Sub(eventTime)
-	if readerLatency > config.Processing.ReaderMaxLatency {
-		LogWarn("High reader latency since event trigger detected for ESL socket message: %v", readerLatency)
+
+	// Generate unique message ID
+	eventType := evt.GetHeader("Event-Name")
+	uuid := evt.GetHeader("Job-UUID")
+	if uuid == "" {
+		uuid = evt.GetHeader("Event-UUID")
 	}
 
-	eventType := evt.GetHeader("Event-Name")
+	ObserveReaderLatency(float64(readerLatency.Milliseconds()))
+	LogLatency("reader", readerLatency, config.Processing.ReaderMaxLatency, map[string]any{
+		"uuid":       uuid,
+		"event_type": eventType,
+		"event_time": eventTime.Format(time.RFC3339),
+		"read_time":  readTime.Format(time.RFC3339),
+	})
+
 	var stream string
 	if eslEventsToPublish[eventType] {
 		if eventType == "BACKGROUND_JOB" {
@@ -272,6 +308,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	}
 
 	msg := message{
+		uuid:           uuid,
 		stream:         stream,
 		values:         values,
 		readTime:       readTime,
@@ -280,11 +317,32 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 
 	select {
 	case ch <- msg:
-	case <-time.After(10 * time.Millisecond):
+	case <-time.After(config.Processing.ReaderBlockTime):
 		select {
 		case ch <- msg:
 		default:
 			LogError("Failed to send message to channel %s, buffer is full", stream)
 		}
 	}
+}
+
+func isClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "EOF" || err.Error() == "use of closed network connection"
+}
+
+// GetESLClient returns the global ESL client for health monitoring
+func GetESLClient() *ESLClient {
+	eslClientMutex.RLock()
+	defer eslClientMutex.RUnlock()
+	return globalESLClient
+}
+
+// setGlobalESLClient sets the global ESL client
+func setGlobalESLClient(client *ESLClient) {
+	eslClientMutex.Lock()
+	defer eslClientMutex.Unlock()
+	globalESLClient = client
 }

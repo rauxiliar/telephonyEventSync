@@ -36,6 +36,7 @@ READER_TYPE=esl
 ESL_HOST=localhost
 ESL_PORT=8021
 ESL_PASSWORD=ClueCon
+ESL_HEALTH_CHECK_TIMEOUT=3s
 ```
 
 ### 2. Unix Socket
@@ -202,7 +203,6 @@ graph TD
     B -->|Pipeline| C[Remote Redis]
     D[Health Monitor] -->|Checks| A
     D -->|Checks| B
-    E[Cleanup Service] -.->|Removes on Shutdown| F[Idle Consumers]
     G[HTTP Server] -->|Exposes| H[Health Endpoint]
 ```
 
@@ -212,7 +212,6 @@ graph TD
 
 - ESL (Event Socket Library) direct connection
 - Unix Socket communication
-- Redis Streams consumer groups
 - Automatic reconnection handling
 - Event filtering capabilities
 - Batch processing support
@@ -229,9 +228,7 @@ graph TD
 ### Data Management
 
 - Real-time event synchronization
-- Consumer group tracking
 - Event persistence (Redis mode)
-- Automatic cleanup on shutdown
 - Stream length management
 - Data loss prevention
 
@@ -242,7 +239,6 @@ graph TD
 - Error tracking
 - Resource usage metrics
 - Graceful shutdown
-- Consumer lifecycle management (Redis mode)
 
 ## Requirements
 
@@ -267,6 +263,7 @@ UNIX_SOCKET_PATH=/var/run/telephony/telephony.sock  # Unix socket path
 ESL_HOST=localhost                # FreeSWITCH ESL host
 ESL_PORT=8021                    # FreeSWITCH ESL port
 ESL_PASSWORD=ClueCon            # FreeSWITCH ESL password
+ESL_HEALTH_CHECK_TIMEOUT=3s     # ESL configuration check timeout
 ```
 
 FreeSWITCH configuration (in `lua.conf.xml`) can be commented or removed since with this solution the scripts are not longer needed:
@@ -307,13 +304,6 @@ REDIS_REMOTE_MIN_IDLE_CONNS=10    # Minimum idle connections in pool
 REDIS_REMOTE_MAX_RETRIES=3        # Maximum retries for failed operations
 ```
 
-### Redis Consumer Group Configuration (only used when READER_TYPE=redis)
-
-```env
-REDIS_GROUP=sync_group            # Redis consumer group name
-REDIS_CONSUMER=sync_worker        # Base consumer name (will be appended with hostname and ID)
-```
-
 ### Stream Configuration
 
 ```env
@@ -336,7 +326,7 @@ TRIM_INTERVAL=10s               # Interval for stream trimming
 READER_WORKERS=10                # Number of parallel reader workers
 READER_BATCH_SIZE=1000           # Number of messages to read at once
 READER_MAX_LATENCY=300ms         # Maximum acceptable read latency
-READER_BLOCK_TIME=10ms           # Block time for XReadGroup operation
+READER_BLOCK_TIME=10ms           # Block time for ESL operations
 
 # Buffer configuration
 BUFFER_SIZE=100000               # Size of the channel buffer between reader and writers
@@ -358,6 +348,13 @@ HEALTH_MAX_RETRIES=5             # Maximum consecutive failures before unhealthy
 HEALTH_PORT=8080                 # Port for health check endpoint
 ```
 
+### Metrics Configuration
+
+```env
+METRICS_PRINT_INTERVAL=5s        # Interval for printing metrics to logs
+METRICS_UPDATE_INTERVAL=1s       # Interval for updating internal metrics
+```
+
 ## Monitoring
 
 The service provides comprehensive monitoring capabilities:
@@ -370,7 +367,6 @@ The service provides comprehensive monitoring capabilities:
 - Write latency
 - Total event latency (from FreeSWITCH to remote Redis)
 - Error counts
-- Consumer status
 
 ### Health Check
 
@@ -415,9 +411,7 @@ Response (when unhealthy):
 - Connection errors
 - Processing errors
 - High latency warnings
-- Cleanup status
 - Metrics every 5 seconds
-- Consumer lifecycle events
 
 ## Performance Optimizations
 
@@ -492,7 +486,6 @@ docker compose up -d
    - Check buffer size
    - Monitor queue size
    - Adjust worker count
-   - Verify consumer group status
    - Check stream trimming settings
 
 ### Monitoring Tools
@@ -500,12 +493,6 @@ docker compose up -d
 1. **Redis CLI**:
 
    ```bash
-   # Check consumer group
-   XINFO GROUPS <stream>
-
-   # Check pending messages
-   XPENDING <stream> <group>
-
    # Check stream length
    XLEN <stream>
    ```

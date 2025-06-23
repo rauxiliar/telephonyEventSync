@@ -5,6 +5,11 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
+
+	"maps"
+
+	"github.com/op/go-logging"
 )
 
 const (
@@ -131,4 +136,51 @@ func LogInfo(format string, args ...interface{}) {
 
 func LogDebug(format string, args ...interface{}) {
 	globalLogger.Log(LogLevelDebug, format, args...)
+}
+
+// LogWithContext logs a message with additional context fields
+func LogWithContext(level logging.Level, message string, fields map[string]any) {
+	// Create structured log entry
+	entry := map[string]any{
+		"timestamp": time.Now().Format(time.RFC3339),
+		"level":     level.String(),
+		"message":   message,
+	}
+
+	// Add context fields
+	maps.Copy(entry, fields)
+
+	// Convert to JSON-like format for logging
+	logEntry := fmt.Sprintf("[%s] %s: %s", level.String(), time.Now().Format("2006-01-02 15:04:05"), message)
+	if len(fields) > 0 {
+		logEntry += fmt.Sprintf(" | Context: %+v", fields)
+	}
+
+	switch level {
+	case logging.DEBUG:
+		globalLogger.Log(LogLevelDebug, "%s", logEntry)
+	case logging.INFO:
+		globalLogger.Log(LogLevelInfo, "%s", logEntry)
+	case logging.WARNING:
+		globalLogger.Log(LogLevelWarn, "%s", logEntry)
+	case logging.ERROR:
+		globalLogger.Log(LogLevelError, "%s", logEntry)
+	}
+}
+
+// LogLatency logs latency information with context only when threshold is exceeded
+func LogLatency(stage string, latency time.Duration, threshold time.Duration, fields map[string]any) {
+	// Only log if latency exceeds threshold
+	if latency <= threshold {
+		return
+	}
+
+	if fields == nil {
+		fields = make(map[string]any)
+	}
+	fields["stage"] = stage
+	fields["latency"] = latency.String()
+	fields["threshold"] = threshold.String()
+
+	LogWithContext(logging.WARNING, "Latency threshold exceeded", fields)
 }

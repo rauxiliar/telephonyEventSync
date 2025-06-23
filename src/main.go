@@ -17,21 +17,22 @@ type Metrics struct {
 	messagesProcessed int64
 	errors            int64
 	lastSyncTime      time.Time
-	readerChannelSize int // Size of the reader channel
-	writerChannelSize int // Size of the writer channel
+	readerChannelSize int   // Size of the reader channel
+	writerChannelSize int   // Size of the writer channel
+	eslConnections    int64 // Number of ESL connections established
+	eslReconnections  int64 // Number of ESL reconnections
 }
 
 type message struct {
+	uuid           string
 	stream         string
-	id             string
 	values         map[string]string
 	readTime       time.Time // Timestamp when the message was read and processed
 	eventTimestamp int64     // Original event timestamp (in milliseconds)
 }
 
 var (
-	// Redis clients
-	rLocal  *redis.Client
+	// Redis client
 	rRemote *redis.Client
 
 	// Metrics
@@ -43,33 +44,24 @@ var (
 	healthMonitor *HealthMonitor
 )
 
-func createGroup(ctx context.Context, client *redis.Client, stream string, groupName string) error {
-	// Try to create the group, if it exists, that's fine
-	err := client.XGroupCreateMkStream(ctx, stream, groupName, "0").Err()
-	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		LogError("Failed to create group %s in stream %s: %v", groupName, stream, err)
-		return err
-	}
-	LogInfo("Group %s created/verified in stream %s", groupName, stream)
-	return nil
-}
-
 func printMetrics() {
-	ticker := time.NewTicker(5 * time.Second)
+	config := getConfig()
+	ticker := time.NewTicker(config.GetMetricsPrintInterval())
 	defer ticker.Stop()
 
 	for range ticker.C {
-		metrics.Lock()
+		metricsManager := GetMetricsManager()
+		snapshot := metricsManager.GetSnapshot()
+
 		LogInfo("Messages processed (last 5s): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
-			metrics.messagesProcessed,
-			metrics.errors,
-			metrics.readerChannelSize,
-			metrics.writerChannelSize,
-			metrics.lastSyncTime.Format(time.RFC3339))
+			snapshot.MessagesProcessed,
+			snapshot.Errors,
+			snapshot.ReaderChannelSize,
+			snapshot.WriterChannelSize,
+			snapshot.LastSyncTime.Format(time.RFC3339))
 
 		// Reset counter after each print
-		metrics.messagesProcessed = 0
-		metrics.Unlock()
+		metricsManager.ResetCounters()
 	}
 }
 
@@ -77,33 +69,43 @@ func trimStreams(ctx context.Context, config Config) {
 	ticker := time.NewTicker(config.Processing.TrimInterval)
 	defer ticker.Stop()
 
+	// Use configurable timeout for trim operations
+	trimTimeout := config.GetRedisRemoteWriteTimeout()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Get current Redis time
-			timeCmd := rRemote.Time(ctx)
+			// Get current Redis time with timeout
+			timeCtx, timeCancel := context.WithTimeout(ctx, trimTimeout)
+			timeCmd := rRemote.Time(timeCtx)
 			if timeCmd.Err() != nil {
 				LogError("Failed to get Redis time: %v", timeCmd.Err())
+				timeCancel()
 				continue
 			}
+			timeCancel()
 
 			// Calculate trim times
 			now := time.Now()
 			eventsTrimTime := now.Add(-config.Streams.Events.ExpireTime).UnixMilli()
 			jobsTrimTime := now.Add(-config.Streams.Jobs.ExpireTime).UnixMilli()
 
-			// Trim events stream
-			eventsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Events.Name, fmt.Sprintf("%d-0", eventsTrimTime)).Result()
+			// Trim events stream with timeout
+			eventsCtx, eventsCancel := context.WithTimeout(ctx, trimTimeout)
+			eventsResult, err := rRemote.XTrimMinID(eventsCtx, config.Streams.Events.Name, fmt.Sprintf("%d-0", eventsTrimTime)).Result()
+			eventsCancel()
 			if err != nil {
 				LogError("Failed to trim events stream: %v", err)
 			} else {
 				LogDebug("Trimmed %d entries from %s", eventsResult, config.Streams.Events.Name)
 			}
 
-			// Trim jobs stream
-			jobsResult, err := rRemote.XTrimMinID(ctx, config.Streams.Jobs.Name, fmt.Sprintf("%d-0", jobsTrimTime)).Result()
+			// Trim jobs stream with timeout
+			jobsCtx, jobsCancel := context.WithTimeout(ctx, trimTimeout)
+			jobsResult, err := rRemote.XTrimMinID(jobsCtx, config.Streams.Jobs.Name, fmt.Sprintf("%d-0", jobsTrimTime)).Result()
+			jobsCancel()
 			if err != nil {
 				LogError("Failed to trim jobs stream: %v", err)
 			} else {
@@ -124,6 +126,10 @@ func main() {
 
 	// Load configuration
 	config := getConfig()
+	if err := validateConfig(&config); err != nil {
+		LogError("Invalid configuration: %v", err)
+		os.Exit(1)
+	}
 
 	// Initialize health monitor
 	healthMonitor = NewHealthMonitor(config)
@@ -142,33 +148,9 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start multiple readers and multiple writers
+	// Start multiple readers and writers
 	wg.Add(1 + config.Processing.ReaderWorkers)
-
-	var cleanup *ConsumerCleanup
-
-	switch config.Reader.Type {
-	case "redis":
-		// Initialize cleanup mechanism
-		streams := []string{config.Streams.Events.Name, config.Streams.Jobs.Name}
-		cleanup = NewConsumerCleanup(rLocal, config.Redis.Group, config.Redis.Consumer, streams, config.Processing.ReaderWorkers)
-		cleanup.Start()
-
-		// Start multiple readers and multiple writers
-		for i := range config.Processing.ReaderWorkers {
-			configCopy := config
-			configCopy.Redis.Consumer = fmt.Sprintf("%s_%d", config.Redis.Consumer, i)
-			go reader(ctx, ch, &wg, i, configCopy)
-		}
-
-	case "unix":
-		go unixSocketServer(ctx, ch, &wg, config)
-	case "esl":
-		go StartESLConnection(ctx, ch, &wg, config)
-	default:
-		LogError("Invalid reader type: %s. Use 'redis', 'unix' or 'esl'", config.Reader.Type)
-		os.Exit(1)
-	}
+	go StartESLConnection(ctx, ch, &wg, config)
 
 	wg.Add(1 + config.Processing.WriterWorkers)
 	for i := range config.Processing.WriterWorkers {
@@ -176,8 +158,8 @@ func main() {
 	}
 	go printMetrics()
 
-	// Start HTTP server for health checks
-	go startHealthServer()
+	// Start HTTP server for health checks and metrics
+	go startAPIServer()
 
 	// Start latency checker
 	startLatencyChecker(config)
@@ -192,19 +174,8 @@ func main() {
 	// Stop health monitor
 	healthMonitor.Stop()
 
-	// Signal reader to stop first
-	close(stopChan)
-
-	// Wait a bit for reader to stop
-	time.Sleep(100 * time.Millisecond)
-
 	// Close message channel
 	close(ch)
-
-	// Stop cleanup if Redis reader
-	if config.Reader.Type == "redis" {
-		cleanup.Stop()
-	}
 
 	// Close Redis connections
 	closeRedisConnections(config)

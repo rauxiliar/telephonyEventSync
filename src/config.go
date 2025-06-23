@@ -7,6 +7,57 @@ import (
 	"time"
 )
 
+// Default configuration values
+const (
+	// ESL defaults
+	DefaultESLHost               = "127.0.0.1"
+	DefaultESLPort               = 8021
+	DefaultESLPassword           = "ClueCon"
+	DefaultESLReconnectDelay     = 3 * time.Second
+	DefaultESLMaxReconnectDelay  = 10 * time.Second
+	DefaultESLHealthCheckTimeout = 3 * time.Second
+
+	// Redis defaults
+	DefaultRedisRemoteAddr       = "127.0.0.1:6379"
+	DefaultRedisRemotePassword   = ""
+	DefaultRedisRemoteDB         = 2
+	DefaultRedisRemotePoolSize   = 100
+	DefaultRedisRemoteMinIdle    = 20
+	DefaultRedisRemoteMaxRetries = 3
+	DefaultRedisWriteTimeout     = 2 * time.Second
+	DefaultRedisDialTimeout      = 3 * time.Second
+	DefaultRedisPoolTimeout      = 5 * time.Second
+
+	// Health defaults
+	DefaultHealthCheckInterval = 5 * time.Second
+	DefaultHealthMaxRetries    = 100
+	DefaultHealthPort          = 9876
+
+	// Metrics defaults
+	DefaultMetricsPrintInterval  = 5 * time.Second
+	DefaultMetricsUpdateInterval = 1 * time.Second
+
+	// Processing defaults
+	DefaultBufferSize            = 50000
+	DefaultReaderWorkers         = 3
+	DefaultWriterWorkers         = 20
+	DefaultWriterBatchSize       = 20
+	DefaultWriterPipelineTimeout = 25 * time.Millisecond
+	DefaultReaderMaxLatency      = 300 * time.Millisecond
+	DefaultWriterMaxLatency      = 300 * time.Millisecond
+	DefaultTotalMaxLatency       = 500 * time.Millisecond
+	DefaultTrimInterval          = 10 * time.Second
+	DefaultReaderBlockTime       = 10 * time.Millisecond
+
+	// Stream defaults
+	DefaultStreamEventsName = "freeswitch:telephony:events"
+	DefaultStreamJobsName   = "freeswitch:telephony:background-jobs"
+	DefaultEventsMaxLen     = 10000
+	DefaultJobsMaxLen       = 10000
+	DefaultEventsExpireTime = 600 * time.Second // 10 minutes
+	DefaultJobsExpireTime   = 60 * time.Second  // 1 minute
+)
+
 type StreamConfig struct {
 	Name       string
 	MaxLen     int64
@@ -15,14 +66,6 @@ type StreamConfig struct {
 
 type Config struct {
 	Redis struct {
-		Local struct {
-			Address      string
-			Password     string
-			DB           int
-			PoolSize     int
-			MinIdleConns int
-			MaxRetries   int
-		}
 		Remote struct {
 			Address      string
 			Password     string
@@ -30,20 +73,21 @@ type Config struct {
 			PoolSize     int
 			MinIdleConns int
 			MaxRetries   int
+			// Timeout settings
+			DialTimeout  time.Duration
+			WriteTimeout time.Duration
+			PoolTimeout  time.Duration
 		}
-		Group    string
-		Consumer string
-	}
-	Reader struct {
-		Type string // "redis", "unix" ou "esl"
-	}
-	Unix struct {
-		SocketPath string
 	}
 	ESL struct {
 		Host     string
 		Port     int
 		Password string
+		// Fast recovery settings
+		ReconnectDelay      time.Duration
+		MaxReconnectDelay   time.Duration
+		HealthCheckInterval time.Duration
+		HealthCheckTimeout  time.Duration
 	}
 	Streams struct {
 		Events StreamConfig
@@ -51,7 +95,6 @@ type Config struct {
 	}
 	Processing struct {
 		// Reader configuration
-		ReaderBatchSize  int64
 		ReaderMaxLatency time.Duration
 		ReaderBlockTime  time.Duration
 		ReaderWorkers    int
@@ -72,26 +115,31 @@ type Config struct {
 		TrimInterval time.Duration
 	}
 	Health struct {
-		CheckInterval   time.Duration
-		RecoveryTimeout time.Duration
-		MaxRetries      int
-		Port            int
+		CheckInterval time.Duration
+		MaxRetries    int
+		Port          int
+	}
+	Metrics struct {
+		PrintInterval  time.Duration
+		UpdateInterval time.Duration
 	}
 }
 
 func validateConfig(config *Config) error {
 	// Redis validation
-	if config.Redis.Local.Address == "" {
-		return fmt.Errorf("local Redis address is required")
-	}
 	if config.Redis.Remote.Address == "" {
 		return fmt.Errorf("remote Redis address is required")
 	}
-	if config.Redis.Group == "" {
-		return fmt.Errorf("Redis group name is required")
+
+	// ESL validation
+	if config.ESL.Host == "" {
+		return fmt.Errorf("ESL host is required")
 	}
-	if config.Redis.Consumer == "" {
-		return fmt.Errorf("Redis consumer name is required")
+	if config.ESL.Port <= 0 || config.ESL.Port > 65535 {
+		return fmt.Errorf("ESL port must be between 1 and 65535, got %d", config.ESL.Port)
+	}
+	if config.ESL.Password == "" {
+		return fmt.Errorf("ESL password is required")
 	}
 
 	// Streams validation
@@ -122,88 +170,84 @@ func validateConfig(config *Config) error {
 		return fmt.Errorf("writer pipeline timeout must be greater than 0")
 	}
 
+	// Health validation
+	if config.Health.CheckInterval <= 0 {
+		return fmt.Errorf("health check interval must be greater than 0")
+	}
+	if config.Health.MaxRetries < 0 {
+		return fmt.Errorf("health max retries must be non-negative")
+	}
+	if config.Health.Port <= 0 || config.Health.Port > 65535 {
+		return fmt.Errorf("health port must be between 1 and 65535, got %d", config.Health.Port)
+	}
+
 	return nil
 }
 
 func getConfig() Config {
 	var config Config
 
-	// Get hostname
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "unknown"
-	}
-
-	// Reader Type
-	config.Reader.Type = getEnv("READER_TYPE", "esl")
-
-	// Unix Socket Configuration
-	config.Unix.SocketPath = getEnv("UNIX_SOCKET_PATH", "/var/run/telephony/telephony.sock")
-
 	// ESL Configuration
-	config.ESL.Host = getEnv("ESL_HOST", "127.0.0.1")
-	config.ESL.Port = getEnvAsInt("ESL_PORT", 8021)
-	config.ESL.Password = getEnv("ESL_PASSWORD", "ClueCon")
+	config.ESL.Host = getEnv("ESL_HOST", DefaultESLHost)
+	config.ESL.Port = getEnvAsInt("ESL_PORT", DefaultESLPort)
+	config.ESL.Password = getEnv("ESL_PASSWORD", DefaultESLPassword)
+	config.ESL.ReconnectDelay = getEnvAsDuration("ESL_RECONNECT_DELAY", DefaultESLReconnectDelay)
+	config.ESL.MaxReconnectDelay = getEnvAsDuration("ESL_MAX_RECONNECT_DELAY", DefaultESLMaxReconnectDelay)
 
-	// Redis Local
-	config.Redis.Local.Address = getEnv("REDIS_LOCAL_ADDR", "localhost:6379")
-	config.Redis.Local.Password = getEnv("REDIS_LOCAL_PASSWORD", "")
-	config.Redis.Local.DB = getEnvAsInt("REDIS_LOCAL_DB", 2)
-	config.Redis.Local.PoolSize = getEnvAsInt("REDIS_LOCAL_POOL_SIZE", 100)
-	config.Redis.Local.MinIdleConns = getEnvAsInt("REDIS_LOCAL_MIN_IDLE_CONNS", 10)
-	config.Redis.Local.MaxRetries = getEnvAsInt("REDIS_LOCAL_MAX_RETRIES", 3)
+	config.ESL.HealthCheckTimeout = getEnvAsDuration("ESL_HEALTH_CHECK_TIMEOUT", DefaultESLHealthCheckTimeout)
 
 	// Redis Remote
-	config.Redis.Remote.Address = getEnv("REDIS_REMOTE_ADDR", "redis.qa-uc-cloud1.gocontact.internal:6379")
-	config.Redis.Remote.Password = getEnv("REDIS_REMOTE_PASSWORD", "")
-	config.Redis.Remote.DB = getEnvAsInt("REDIS_REMOTE_DB", 2)
-	config.Redis.Remote.PoolSize = getEnvAsInt("REDIS_REMOTE_POOL_SIZE", 100)
-	config.Redis.Remote.MinIdleConns = getEnvAsInt("REDIS_REMOTE_MIN_IDLE_CONNS", 20)
-	config.Redis.Remote.MaxRetries = getEnvAsInt("REDIS_REMOTE_MAX_RETRIES", 3)
-
-	// Redis Consumer Group
-	config.Redis.Group = getEnv("REDIS_GROUP", "sync_group")
-	baseConsumer := getEnv("REDIS_CONSUMER", "sync_worker")
-	config.Redis.Consumer = baseConsumer + "_" + hostname
+	config.Redis.Remote.Address = getEnv("REDIS_REMOTE_ADDR", DefaultRedisRemoteAddr)
+	config.Redis.Remote.Password = getEnv("REDIS_REMOTE_PASSWORD", DefaultRedisRemotePassword)
+	config.Redis.Remote.DB = getEnvAsInt("REDIS_REMOTE_DB", DefaultRedisRemoteDB)
+	config.Redis.Remote.PoolSize = getEnvAsInt("REDIS_REMOTE_POOL_SIZE", DefaultRedisRemotePoolSize)
+	config.Redis.Remote.MinIdleConns = getEnvAsInt("REDIS_REMOTE_MIN_IDLE_CONNS", DefaultRedisRemoteMinIdle)
+	config.Redis.Remote.MaxRetries = getEnvAsInt("REDIS_REMOTE_MAX_RETRIES", DefaultRedisRemoteMaxRetries)
+	// Redis Remote Timeouts
+	config.Redis.Remote.DialTimeout = getEnvAsDuration("REDIS_REMOTE_DIAL_TIMEOUT", DefaultRedisDialTimeout)
+	config.Redis.Remote.WriteTimeout = getEnvAsDuration("REDIS_REMOTE_WRITE_TIMEOUT", DefaultRedisWriteTimeout)
+	config.Redis.Remote.PoolTimeout = getEnvAsDuration("REDIS_REMOTE_POOL_TIMEOUT", DefaultRedisPoolTimeout)
 
 	// Streams
 	config.Streams.Events = StreamConfig{
-		Name:       getEnv("STREAM_EVENTS", "freeswitch:telephony:events"),
-		MaxLen:     getEnvAsInt64("EVENTS_MAX_LEN", 10000),
-		ExpireTime: getEnvAsDuration("EVENTS_EXPIRE_TIME", 600*time.Second), // 10 minutes
+		Name:       getEnv("STREAM_EVENTS", DefaultStreamEventsName),
+		MaxLen:     getEnvAsInt64("EVENTS_MAX_LEN", DefaultEventsMaxLen),
+		ExpireTime: getEnvAsDuration("EVENTS_EXPIRE_TIME", DefaultEventsExpireTime),
 	}
 	config.Streams.Jobs = StreamConfig{
-		Name:       getEnv("STREAM_JOBS", "freeswitch:telephony:background-jobs"),
-		MaxLen:     getEnvAsInt64("JOBS_MAX_LEN", 10000),
-		ExpireTime: getEnvAsDuration("JOBS_EXPIRE_TIME", 60*time.Second), // 1 minute
+		Name:       getEnv("STREAM_JOBS", DefaultStreamJobsName),
+		MaxLen:     getEnvAsInt64("JOBS_MAX_LEN", DefaultJobsMaxLen),
+		ExpireTime: getEnvAsDuration("JOBS_EXPIRE_TIME", DefaultJobsExpireTime),
 	}
 
 	// Processing - Reader
-	config.Processing.ReaderBatchSize = getEnvAsInt64("READER_BATCH_SIZE", 5000)
-	config.Processing.ReaderMaxLatency = getEnvAsDuration("READER_MAX_LATENCY", 50*time.Millisecond)
-	config.Processing.ReaderBlockTime = getEnvAsDuration("READER_BLOCK_TIME", 10*time.Millisecond)
-	config.Processing.ReaderWorkers = getEnvAsInt("READER_WORKERS", 3)
+	config.Processing.ReaderMaxLatency = getEnvAsDuration("READER_MAX_LATENCY", DefaultReaderMaxLatency)
+	config.Processing.ReaderBlockTime = getEnvAsDuration("READER_BLOCK_TIME", DefaultReaderBlockTime)
+	config.Processing.ReaderWorkers = getEnvAsInt("READER_WORKERS", DefaultReaderWorkers)
 
 	// Processing - Writer
-	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", 20)
-	config.Processing.WriterMaxLatency = getEnvAsDuration("WRITER_MAX_LATENCY", 100*time.Millisecond)
-	config.Processing.WriterPipelineTimeout = getEnvAsDuration("WRITER_PIPELINE_TIMEOUT", 25*time.Millisecond)
-	config.Processing.WriterWorkers = getEnvAsInt("WRITER_WORKERS", 20)
+	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", DefaultWriterBatchSize)
+	config.Processing.WriterMaxLatency = getEnvAsDuration("WRITER_MAX_LATENCY", DefaultWriterMaxLatency)
+	config.Processing.WriterPipelineTimeout = getEnvAsDuration("WRITER_PIPELINE_TIMEOUT", DefaultWriterPipelineTimeout)
+	config.Processing.WriterWorkers = getEnvAsInt("WRITER_WORKERS", DefaultWriterWorkers)
 
 	// Processing - Buffer
-	config.Processing.BufferSize = getEnvAsInt("BUFFER_SIZE", 50000)
+	config.Processing.BufferSize = getEnvAsInt("BUFFER_SIZE", DefaultBufferSize)
 
 	// Processing - Total Max Latency
-	config.Processing.TotalMaxLatency = getEnvAsDuration("TOTAL_MAX_LATENCY", 1000*time.Millisecond)
+	config.Processing.TotalMaxLatency = getEnvAsDuration("TOTAL_MAX_LATENCY", DefaultTotalMaxLatency)
 
 	// Processing - Trim Interval
-	config.Processing.TrimInterval = getEnvAsDuration("TRIM_INTERVAL", 10*time.Second)
+	config.Processing.TrimInterval = getEnvAsDuration("TRIM_INTERVAL", DefaultTrimInterval)
 
 	// Health
-	config.Health.CheckInterval = getEnvAsDuration("HEALTH_CHECK_INTERVAL", 5*time.Second)
-	config.Health.RecoveryTimeout = getEnvAsDuration("HEALTH_RECOVERY_TIMEOUT", 30*time.Second)
-	config.Health.MaxRetries = getEnvAsInt("HEALTH_MAX_RETRIES", 5)
-	config.Health.Port = getEnvAsInt("HEALTH_PORT", 9876)
+	config.Health.CheckInterval = getEnvAsDuration("HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval)
+	config.Health.MaxRetries = getEnvAsInt("HEALTH_MAX_RETRIES", DefaultHealthMaxRetries)
+	config.Health.Port = getEnvAsInt("HEALTH_PORT", DefaultHealthPort)
+
+	// Metrics
+	config.Metrics.PrintInterval = getEnvAsDuration("METRICS_PRINT_INTERVAL", DefaultMetricsPrintInterval)
+	config.Metrics.UpdateInterval = getEnvAsDuration("METRICS_UPDATE_INTERVAL", DefaultMetricsUpdateInterval)
 
 	// Validate configuration
 	if err := validateConfig(&config); err != nil {
@@ -246,4 +290,91 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+// GetESLHealthCheckTimeout returns the ESL health check timeout with fallback
+func (c *Config) GetESLHealthCheckTimeout() time.Duration {
+	if c.ESL.HealthCheckTimeout == 0 {
+		return DefaultESLHealthCheckTimeout
+	}
+	return c.ESL.HealthCheckTimeout
+}
+
+// GetESLReconnectDelay returns the ESL reconnect delay with fallback
+func (c *Config) GetESLReconnectDelay() time.Duration {
+	if c.ESL.ReconnectDelay == 0 {
+		return DefaultESLReconnectDelay
+	}
+	return c.ESL.ReconnectDelay
+}
+
+// GetESLMaxReconnectDelay returns the ESL max reconnect delay with fallback
+func (c *Config) GetESLMaxReconnectDelay() time.Duration {
+	if c.ESL.MaxReconnectDelay == 0 {
+		return DefaultESLMaxReconnectDelay
+	}
+	return c.ESL.MaxReconnectDelay
+}
+
+// GetRedisRemoteWriteTimeout returns the Redis remote write timeout with fallback
+func (c *Config) GetRedisRemoteWriteTimeout() time.Duration {
+	if c.Redis.Remote.WriteTimeout == 0 {
+		return DefaultRedisWriteTimeout
+	}
+	return c.Redis.Remote.WriteTimeout
+}
+
+// GetRedisRemoteDialTimeout returns the Redis remote dial timeout with fallback
+func (c *Config) GetRedisRemoteDialTimeout() time.Duration {
+	if c.Redis.Remote.DialTimeout == 0 {
+		return DefaultRedisDialTimeout
+	}
+	return c.Redis.Remote.DialTimeout
+}
+
+// GetHealthCheckInterval returns the health check interval with fallback
+func (c *Config) GetHealthCheckInterval() time.Duration {
+	if c.Health.CheckInterval == 0 {
+		return DefaultHealthCheckInterval
+	}
+	return c.Health.CheckInterval
+}
+
+// GetHealthMaxRetries returns the health max retries with fallback
+func (c *Config) GetHealthMaxRetries() int {
+	if c.Health.MaxRetries == 0 {
+		return DefaultHealthMaxRetries
+	}
+	return c.Health.MaxRetries
+}
+
+// GetHealthPort returns the health port with fallback
+func (c *Config) GetHealthPort() int {
+	if c.Health.Port == 0 {
+		return DefaultHealthPort
+	}
+	return c.Health.Port
+}
+
+// GetMetricsPrintInterval returns the metrics print interval with fallback
+func (c *Config) GetMetricsPrintInterval() time.Duration {
+	if c.Metrics.PrintInterval == 0 {
+		return DefaultMetricsPrintInterval
+	}
+	return c.Metrics.PrintInterval
+}
+
+// GetMetricsUpdateInterval returns the metrics update interval with fallback
+func (c *Config) GetMetricsUpdateInterval() time.Duration {
+	if c.Metrics.UpdateInterval == 0 {
+		return DefaultMetricsUpdateInterval
+	}
+	return c.Metrics.UpdateInterval
+}
+
+func (c *Config) GetHealthCheckTimeout() time.Duration {
+	if c.Health.CheckInterval == 0 {
+		return DefaultHealthCheckInterval
+	}
+	return c.Health.CheckInterval
 }
