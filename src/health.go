@@ -11,10 +11,11 @@ import (
 
 type HealthStatus struct {
 	sync.RWMutex
-	lastError        error
-	recoveryAttempts int
-	isHealthy        bool
-	lastCheck        time.Time
+	lastError             error
+	redisRecoveryAttempts int
+	eslRecoveryAttempts   int
+	isHealthy             bool
+	lastCheck             time.Time
 }
 
 type HealthMonitor struct {
@@ -34,9 +35,10 @@ func NewHealthMonitor(config Config) *HealthMonitor {
 		cancel: cancel,
 		config: config,
 		status: &HealthStatus{
-			isHealthy:        true,
-			lastCheck:        time.Now(),
-			recoveryAttempts: 0,
+			isHealthy:             true,
+			lastCheck:             time.Now(),
+			redisRecoveryAttempts: 0,
+			eslRecoveryAttempts:   0,
 		},
 		maxRetries: config.GetHealthMaxRetries(),
 		ticker:     time.NewTicker(config.GetHealthCheckInterval()),
@@ -64,47 +66,58 @@ func (hm *HealthMonitor) monitor() {
 
 func (hm *HealthMonitor) performHealthCheck() {
 	// Check Redis connections
-	if !hm.checkRedisConnections() {
+	redisHealthy := hm.checkRedisConnections()
+	if !redisHealthy {
 		hm.status.Lock()
 		hm.status.lastError = fmt.Errorf("redis connection failed")
 		hm.status.isHealthy = false
-		hm.status.recoveryAttempts++
+		hm.status.redisRecoveryAttempts++
 		hm.status.Unlock()
 
 		LogError("Unhealthy state detected: %v", hm.status.lastError)
 
-		if hm.status.recoveryAttempts <= hm.maxRetries {
+		if hm.status.redisRecoveryAttempts <= hm.maxRetries {
 			go hm.attemptRedisRecovery()
 		} else {
-			LogError("Max recovery attempts reached. Manual intervention required.")
+			LogError("Max Redis recovery attempts reached. Manual intervention required.")
 		}
-		return
+	} else {
+		// Reset Redis recovery attempts if Redis is healthy
+		hm.status.Lock()
+		hm.status.redisRecoveryAttempts = 0
+		hm.status.Unlock()
 	}
 
 	// Check ESL connection
-	if !hm.checkESLConnection() {
+	eslHealthy := hm.checkESLConnection()
+	if !eslHealthy {
 		hm.status.Lock()
 		hm.status.lastError = fmt.Errorf("ESL connection failed")
 		hm.status.isHealthy = false
-		hm.status.recoveryAttempts++
+		hm.status.eslRecoveryAttempts++
 		hm.status.Unlock()
 
 		LogError("Unhealthy state detected: %v", hm.status.lastError)
 
 		// ESL recovery is handled by the main connection loop
 		// No need for separate recovery attempt here
-		return
+	} else {
+		// Reset ESL recovery attempts if ESL is healthy
+		hm.status.Lock()
+		hm.status.eslRecoveryAttempts = 0
+		hm.status.Unlock()
 	}
 
-	// Reset status on successful health check
-	hm.status.Lock()
-	hm.status.isHealthy = true
-	hm.status.lastError = nil
-	hm.status.recoveryAttempts = 0
-	hm.status.lastCheck = time.Now()
-	hm.status.Unlock()
+	// Overall health status
+	if redisHealthy && eslHealthy {
+		hm.status.Lock()
+		hm.status.isHealthy = true
+		hm.status.lastError = nil
+		hm.status.lastCheck = time.Now()
+		hm.status.Unlock()
 
-	LogDebug("Health check passed")
+		LogDebug("Health check passed")
+	}
 }
 
 func (hm *HealthMonitor) checkRedisConnections() bool {
@@ -124,7 +137,7 @@ func (hm *HealthMonitor) checkRedisConnections() bool {
 }
 
 func (hm *HealthMonitor) attemptRedisRecovery() {
-	LogInfo("Starting Redis recovery attempt %d", hm.status.recoveryAttempts)
+	LogInfo("Starting Redis recovery attempt %d", hm.status.redisRecoveryAttempts)
 
 	newRemote := redis.NewClient(&redis.Options{
 		Addr:         hm.config.Redis.Remote.Address,
@@ -164,7 +177,7 @@ func (hm *HealthMonitor) checkESLConnection() bool {
 	// Check main system ESL client
 	mainESLClient := GetESLClient()
 	if mainESLClient == nil {
-		LogError("Main system ESL client is nil")
+		LogError("ESL client is nil")
 		return false
 	}
 
@@ -185,9 +198,10 @@ func (hm *HealthMonitor) GetStatus() map[string]any {
 	defer hm.status.RUnlock()
 
 	return map[string]any{
-		"is_healthy":        hm.status.isHealthy,
-		"last_check":        hm.status.lastCheck,
-		"last_error":        hm.status.lastError,
-		"recovery_attempts": hm.status.recoveryAttempts,
+		"is_healthy":              hm.status.isHealthy,
+		"last_check":              hm.status.lastCheck,
+		"last_error":              hm.status.lastError,
+		"redis_recovery_attempts": hm.status.redisRecoveryAttempts,
+		"esl_recovery_attempts":   hm.status.eslRecoveryAttempts,
 	}
 }

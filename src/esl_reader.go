@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/0x19/goesl"
 	"github.com/op/go-logging"
 )
@@ -47,13 +49,9 @@ func (e *ESLClient) SetupAndConnect() error {
 
 	var events []string
 	// Add events to publish
-	for _, event := range e.config.Processing.EventsToPublish {
-		events = append(events, event)
-	}
+	events = append(events, e.config.Processing.EventsToPublish...)
 	// Add events to push
-	for _, event := range e.config.Processing.EventsToPush {
-		events = append(events, event)
-	}
+	events = append(events, e.config.Processing.EventsToPush...)
 
 	eventCmd := fmt.Sprintf("events json %s", strings.Join(events, " "))
 	LogInfo("Subscribing to events: %s", eventCmd)
@@ -310,7 +308,6 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		}
 	}
 }
-
 func isClosedError(err error) bool {
 	if err == nil {
 		return false
@@ -334,19 +331,9 @@ func setGlobalESLClient(client *ESLClient) {
 
 // Helper functions to check if event should be published/pushed
 func isEventToPublish(eventType string, config Config) bool {
-	for _, event := range config.Processing.EventsToPublish {
-		if event == eventType {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(config.Processing.EventsToPublish, eventType)
 }
 
 func isEventToPush(eventType string, config Config) bool {
-	for _, event := range config.Processing.EventsToPush {
-		if event == eventType {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(config.Processing.EventsToPush, eventType)
 }
