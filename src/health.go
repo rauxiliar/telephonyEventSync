@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0x19/goesl"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -70,12 +69,11 @@ func (hm *HealthMonitor) performHealthCheck() {
 		hm.status.lastError = fmt.Errorf("redis connection failed")
 		hm.status.isHealthy = false
 		hm.status.recoveryAttempts++
-		recoveryAttempts := hm.status.recoveryAttempts
 		hm.status.Unlock()
 
 		LogError("Unhealthy state detected: %v", hm.status.lastError)
 
-		if recoveryAttempts <= hm.maxRetries {
+		if hm.status.recoveryAttempts <= hm.maxRetries {
 			go hm.attemptRedisRecovery()
 		} else {
 			LogError("Max recovery attempts reached. Manual intervention required.")
@@ -89,16 +87,12 @@ func (hm *HealthMonitor) performHealthCheck() {
 		hm.status.lastError = fmt.Errorf("ESL connection failed")
 		hm.status.isHealthy = false
 		hm.status.recoveryAttempts++
-		recoveryAttempts := hm.status.recoveryAttempts
 		hm.status.Unlock()
 
 		LogError("Unhealthy state detected: %v", hm.status.lastError)
 
-		if recoveryAttempts <= hm.maxRetries {
-			go hm.attemptESLRecovery()
-		} else {
-			LogError("Max recovery attempts reached. Manual intervention required.")
-		}
+		// ESL recovery is handled by the main connection loop
+		// No need for separate recovery attempt here
 		return
 	}
 
@@ -174,80 +168,10 @@ func (hm *HealthMonitor) checkESLConnection() bool {
 		return false
 	}
 
-	// Test ESL client with bgapi uptime (background execution)
-	ctx, cancel := context.WithTimeout(context.Background(), hm.config.GetESLHealthCheckTimeout())
-	defer cancel()
-
-	// Send bgapi uptime command and read response with timeout
-	responseChan := make(chan *goesl.Message, 1)
-	errChan := make(chan error, 1)
-
-	go func() {
-		// Send bgapi uptime command (background execution)
-		if err := mainESLClient.client.Send("bgapi uptime"); err != nil {
-			errChan <- err
-			return
-		}
-
-		// Read response
-		response, err := mainESLClient.client.ReadMessage()
-		if err != nil {
-			errChan <- err
-			return
-		}
-		responseChan <- response
-	}()
-
-	select {
-	case <-ctx.Done():
-		LogError("ESL bgapi uptime timeout after %v", hm.config.GetESLHealthCheckTimeout())
-		return false
-	case err := <-errChan:
-		LogError("ESL bgapi uptime failed: %v", err)
-		return false
-	case response := <-responseChan:
-		// Verify response is valid
-		eventName := response.GetHeader("Event-Name")
-		jobCommand := response.GetHeader("Job-Command")
-
-		// Accept BACKGROUND_JOB events for bgapi commands as valid responses
-		if eventName == "BACKGROUND_JOB" && jobCommand == "uptime" {
-			LogDebug("ESL health check passed")
-			return true
-		}
-
-		LogError("ESL bgapi uptime response invalid: Event-Name=%s, Job-Command=%s", eventName, jobCommand)
-		return false
-	}
-}
-
-func (hm *HealthMonitor) attemptESLRecovery() {
-	LogInfo("Starting ESL recovery attempt %d", hm.status.recoveryAttempts)
-
-	// Create new ESL client
-	newESLClient, err := NewESLClient(hm.config)
-	if err != nil {
-		LogError("Failed to create new ESL client: %v", err)
-		return
-	}
-
-	// Test new connection by trying to setup and connect
-	if err := newESLClient.SetupAndConnect(); err != nil {
-		LogError("Failed to setup new ESL client: %v", err)
-		newESLClient.Close()
-		return
-	}
-
-	// Replace global ESL client (synchronize with main system)
-	oldGlobalClient := GetESLClient()
-	setGlobalESLClient(newESLClient)
-
-	// Close old client
-	if oldGlobalClient != nil {
-		oldGlobalClient.Close()
-	}
-
-	LogInfo("Successfully reconnected to ESL")
+	// Simple connection check - just verify client exists and is not nil
+	// The main ESL connection loop will handle reconnection if needed
+	LogDebug("ESL health check passed")
+	return true
 }
 
 func (hm *HealthMonitor) IsHealthy() bool {

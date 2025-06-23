@@ -234,7 +234,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 	var eventTimestamp int64
 	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
 		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
-			eventTimestamp = ts * 1000 // nanoseconds
+			eventTimestamp = ts * 1000 // Convert microseconds to nanoseconds
 		}
 	}
 
