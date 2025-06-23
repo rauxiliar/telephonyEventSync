@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -208,14 +207,17 @@ func (hm *HealthMonitor) checkESLConnection() bool {
 		return false
 	case response := <-responseChan:
 		// Verify response is valid
-		replyText := response.GetHeader("Reply-Text")
-		if replyText == "" || !strings.HasPrefix(replyText, "+OK") {
-			LogError("ESL bgapi uptime response invalid: %s", replyText)
-			return false
+		eventName := response.GetHeader("Event-Name")
+		jobCommand := response.GetHeader("Job-Command")
+
+		// Accept BACKGROUND_JOB events for bgapi commands as valid responses
+		if eventName == "BACKGROUND_JOB" && jobCommand == "uptime" {
+			LogDebug("ESL health check passed")
+			return true
 		}
 
-		LogDebug("ESL health check passed, bgapi uptime: %s", replyText)
-		return true
+		LogError("ESL bgapi uptime response invalid: Event-Name=%s, Job-Command=%s", eventName, jobCommand)
+		return false
 	}
 }
 
@@ -229,59 +231,23 @@ func (hm *HealthMonitor) attemptESLRecovery() {
 		return
 	}
 
-	// Test new connection with bgapi uptime command
-	ctx, cancel := context.WithTimeout(hm.ctx, hm.config.GetESLHealthCheckTimeout())
-	defer cancel()
-
-	// Test new connection with bgapi uptime command
-	if err := newESLClient.client.Send("bgapi uptime"); err != nil {
-		LogError("Failed to send bgapi uptime to new ESL client: %v", err)
+	// Test new connection by trying to setup and connect
+	if err := newESLClient.SetupAndConnect(); err != nil {
+		LogError("Failed to setup new ESL client: %v", err)
 		newESLClient.Close()
 		return
 	}
 
-	// Read response with timeout
-	responseChan := make(chan *goesl.Message, 1)
-	errChan := make(chan error, 1)
+	// Replace global ESL client (synchronize with main system)
+	oldGlobalClient := GetESLClient()
+	setGlobalESLClient(newESLClient)
 
-	go func() {
-		response, err := newESLClient.client.ReadMessage()
-		if err != nil {
-			errChan <- err
-			return
-		}
-		responseChan <- response
-	}()
-
-	select {
-	case <-ctx.Done():
-		LogError("ESL recovery timeout after %v", hm.config.GetESLHealthCheckTimeout())
-		newESLClient.Close()
-		return
-	case err := <-errChan:
-		LogError("Failed to read bgapi uptime response from new ESL client: %v", err)
-		newESLClient.Close()
-		return
-	case response := <-responseChan:
-		// Verify response is valid
-		replyText := response.GetHeader("Reply-Text")
-		if replyText == "" || !strings.HasPrefix(replyText, "+OK") {
-			LogError("New ESL client bgapi uptime response invalid: %s", replyText)
-			newESLClient.Close()
-			return
-		}
-
-		// Replace global ESL client (synchronize with main system)
-		oldGlobalClient := GetESLClient()
-		setGlobalESLClient(newESLClient)
-
-		// Close old client
-		if oldGlobalClient != nil {
-			oldGlobalClient.Close()
-		}
-
-		LogInfo("Successfully reconnected to ESL, bgapi uptime: %s", replyText)
+	// Close old client
+	if oldGlobalClient != nil {
+		oldGlobalClient.Close()
 	}
+
+	LogInfo("Successfully reconnected to ESL")
 }
 
 func (hm *HealthMonitor) IsHealthy() bool {
