@@ -2,17 +2,28 @@ package main
 
 import (
 	"context"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
 
 var (
-	// Track if this is the initial connection
-	isInitialConnection bool = true
+	// Track connection state
+	redisConnectionState struct {
+		sync.Mutex
+		initialConnectionsMade int
+		isInitializing         bool
+	}
 )
 
 // initializeRedisConnections initializes Redis remote connection
 func initializeRedisConnections(ctx context.Context, config Config) error {
+	// Mark that we're in initialization phase
+	redisConnectionState.Lock()
+	redisConnectionState.isInitializing = true
+	redisConnectionState.initialConnectionsMade = 0
+	redisConnectionState.Unlock()
+
 	// Connect to remote Redis with configurable timeouts
 	rRemote = redis.NewClient(&redis.Options{
 		Addr:         config.Redis.Remote.Address,
@@ -27,20 +38,32 @@ func initializeRedisConnections(ctx context.Context, config Config) error {
 		PoolTimeout:  config.Redis.Remote.PoolTimeout,
 		// Add hooks to detect reconnections
 		OnConnect: func(ctx context.Context, cn *redis.Conn) error {
-			LogInfo("Redis connection established")
-			// Count active connections in the pool
+			redisConnectionState.Lock()
+			defer redisConnectionState.Unlock()
+
+			// If we're still initializing, these are initial pool connections
+			if redisConnectionState.isInitializing {
+				redisConnectionState.initialConnectionsMade++
+
+				// Log only the first connection during initialization
+				if redisConnectionState.initialConnectionsMade == 1 {
+					LogInfo("Redis connection established")
+				}
+
+				// Mark initialization as complete when we have enough connections for the pool
+				if redisConnectionState.initialConnectionsMade >= config.Redis.Remote.MinIdleConns {
+					redisConnectionState.isInitializing = false
+				}
+			} else {
+				// This is a real reconnection (after initialization is complete)
+				LogInfo("Redis reconnection detected")
+				GetMetricsManager().IncrementRedisReconnections()
+			}
+
+			// Update metrics with current pool stats
 			stats := rRemote.PoolStats()
 			activeConnections := stats.TotalConns
 			GetMetricsManager().SetRedisConnections(int64(activeConnections))
-
-			// If this is not the initial connection, it's a reconnection
-			if !isInitialConnection {
-				LogInfo("Redis reconnection detected")
-				GetMetricsManager().IncrementRedisReconnections()
-			} else {
-				// Mark that initial connection is done
-				isInitialConnection = false
-			}
 
 			return nil
 		},

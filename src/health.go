@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type HealthStatus struct {
@@ -149,41 +147,22 @@ func (hm *HealthMonitor) checkRedisConnections() bool {
 func (hm *HealthMonitor) attemptRedisRecovery() {
 	LogInfo("Starting Redis recovery attempt %d", hm.status.redisRecoveryAttempts)
 
-	newRemote := redis.NewClient(&redis.Options{
-		Addr:         hm.config.Redis.Remote.Address,
-		Password:     hm.config.Redis.Remote.Password,
-		DB:           hm.config.Redis.Remote.DB,
-		PoolSize:     hm.config.Redis.Remote.PoolSize,
-		MinIdleConns: hm.config.Redis.Remote.MinIdleConns,
-		MaxRetries:   hm.config.Redis.Remote.MaxRetries,
-		// Use configured timeouts for recovery
-		DialTimeout:  hm.config.Redis.Remote.DialTimeout,
-		WriteTimeout: hm.config.Redis.Remote.WriteTimeout,
-		PoolTimeout:  hm.config.Redis.Remote.PoolTimeout,
-	})
-
-	// Test new connections with timeout
+	// Instead of creating a new client, just try to ping the existing one
+	// The Redis client has built-in reconnection logic
 	ctx, cancel := context.WithTimeout(hm.ctx, hm.config.Redis.Remote.DialTimeout)
 	defer cancel()
 
-	if err := newRemote.Ping(ctx).Err(); err != nil {
-		LogError("Failed to establish new remote Redis connection: %v", err)
+	if err := rRemote.Ping(ctx).Err(); err != nil {
+		LogError("Redis recovery ping failed: %v", err)
 		return
 	}
 
-	// Replace global Redis client (synchronize with main system)
-	oldGlobalRemote := rRemote
-	rRemote = newRemote
+	// Update metrics to reflect successful recovery
+	stats := rRemote.PoolStats()
+	activeConnections := stats.TotalConns
+	GetMetricsManager().SetRedisConnections(int64(activeConnections))
 
-	// Close old connections
-	if oldGlobalRemote != nil {
-		oldGlobalRemote.Close()
-	}
-
-	// Increment Redis reconnections metric
-	GetMetricsManager().IncrementRedisReconnections()
-
-	LogInfo("Successfully reconnected to Redis instances")
+	LogInfo("Redis recovery successful - connection is healthy")
 }
 
 func (hm *HealthMonitor) checkESLConnection() bool {
