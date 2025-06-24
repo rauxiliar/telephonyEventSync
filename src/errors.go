@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 )
 
 // Error types for better error handling
@@ -45,27 +44,4 @@ func (e *ConfigurationError) Error() string {
 
 func (e *ConfigurationError) Unwrap() error {
 	return e.Err
-}
-
-type PipelineError struct {
-	WorkerID int
-	Err      error
-}
-
-func (e *PipelineError) Error() string {
-	return fmt.Sprintf("pipeline execution failed for worker %d: %v", e.WorkerID, e.Err)
-}
-
-func (e *PipelineError) Unwrap() error {
-	return e.Err
-}
-
-type LatencyError struct {
-	Expected time.Duration
-	Actual   time.Duration
-	Stage    string
-}
-
-func (e *LatencyError) Error() string {
-	return fmt.Sprintf("latency exceeded in %s: expected %v, got %v", e.Stage, e.Expected, e.Actual)
 }

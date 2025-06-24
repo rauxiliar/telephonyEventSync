@@ -132,8 +132,15 @@ func (hm *HealthMonitor) checkRedisConnections() bool {
 	remoteAddr := hm.config.Redis.Remote.Address
 	if err := rRemote.Ping(ctx).Err(); err != nil {
 		LogError("Redis connection failed (%s): %v", remoteAddr, err)
+		// Set Redis connections to 0 when connection fails
+		GetMetricsManager().SetRedisConnections(0)
 		return false
 	}
+
+	// Update with current pool stats
+	stats := rRemote.PoolStats()
+	activeConnections := stats.TotalConns
+	GetMetricsManager().SetRedisConnections(int64(activeConnections))
 
 	LogDebug("Redis health check passed")
 	return true
@@ -184,6 +191,8 @@ func (hm *HealthMonitor) checkESLConnection() bool {
 	mainESLClient := GetESLClient()
 	if mainESLClient == nil {
 		LogError("ESL client is nil")
+		// Set ESL connections to 0 when client is nil
+		GetMetricsManager().SetESLConnections(0)
 		return false
 	}
 

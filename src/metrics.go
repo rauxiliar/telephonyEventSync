@@ -24,17 +24,17 @@ var (
 		Name: "telephony_writer_channel_size",
 		Help: "Current size of the writer channel.",
 	})
-	promESLConnections = prometheus.NewCounter(prometheus.CounterOpts{
+	promESLConnections = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "telephony_esl_connections_total",
-		Help: "Total number of established ESL connections.",
+		Help: "Current number of active ESL connections.",
 	})
 	promESLReconnections = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "telephony_esl_reconnections_total",
 		Help: "Total number of ESL reconnections.",
 	})
-	promRedisConnections = prometheus.NewCounter(prometheus.CounterOpts{
+	promRedisConnections = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "telephony_redis_connections_total",
-		Help: "Total number of established Redis connections.",
+		Help: "Current number of active Redis connections.",
 	})
 	promRedisReconnections = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "telephony_redis_reconnections_total",
@@ -101,6 +101,12 @@ func (mm *MetricsManager) IncrementESLConnections() {
 	promESLConnections.Inc()
 }
 
+// SetESLConnections sets the current number of ESL connections
+func (mm *MetricsManager) SetESLConnections(count int64) {
+	atomic.StoreInt64(&mm.metrics.eslConnections, count)
+	promESLConnections.Set(float64(count))
+}
+
 // IncrementESLReconnections atomically increments the ESL reconnections counter
 func (mm *MetricsManager) IncrementESLReconnections() {
 	atomic.AddInt64(&mm.metrics.eslReconnections, 1)
@@ -111,6 +117,12 @@ func (mm *MetricsManager) IncrementESLReconnections() {
 func (mm *MetricsManager) IncrementRedisConnections() {
 	atomic.AddInt64(&mm.metrics.redisConnections, 1)
 	promRedisConnections.Inc()
+}
+
+// SetRedisConnections sets the current number of Redis connections
+func (mm *MetricsManager) SetRedisConnections(count int64) {
+	atomic.StoreInt64(&mm.metrics.redisConnections, count)
+	promRedisConnections.Set(float64(count))
 }
 
 // IncrementRedisReconnections atomically increments the Redis reconnections counter

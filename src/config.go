@@ -145,57 +145,117 @@ type Config struct {
 func validateConfig(config *Config) error {
 	// Redis validation
 	if config.Redis.Remote.Address == "" {
-		return fmt.Errorf("remote Redis address is required")
+		return &ConfigurationError{
+			Field: "REDIS_REMOTE_ADDR",
+			Value: "",
+			Err:   fmt.Errorf("remote Redis address is required"),
+		}
 	}
 
 	// ESL validation
 	if config.ESL.Host == "" {
-		return fmt.Errorf("ESL host is required")
+		return &ConfigurationError{
+			Field: "ESL_HOST",
+			Value: "",
+			Err:   fmt.Errorf("ESL host is required"),
+		}
 	}
 	if config.ESL.Port <= 0 || config.ESL.Port > 65535 {
-		return fmt.Errorf("ESL port must be between 1 and 65535, got %d", config.ESL.Port)
+		return &ConfigurationError{
+			Field: "ESL_PORT",
+			Value: fmt.Sprintf("%d", config.ESL.Port),
+			Err:   fmt.Errorf("ESL port must be between 1 and 65535"),
+		}
 	}
 	if config.ESL.Password == "" {
-		return fmt.Errorf("ESL password is required")
+		return &ConfigurationError{
+			Field: "ESL_PASSWORD",
+			Value: "",
+			Err:   fmt.Errorf("ESL password is required"),
+		}
 	}
 
 	// Streams validation
 	if config.Streams.Events.Name == "" {
-		return fmt.Errorf("stream events are required")
+		return &ConfigurationError{
+			Field: "STREAM_EVENTS",
+			Value: "",
+			Err:   fmt.Errorf("stream events are required"),
+		}
 	}
 	if config.Streams.Jobs.Name == "" {
-		return fmt.Errorf("stream jobs are required")
+		return &ConfigurationError{
+			Field: "STREAM_JOBS",
+			Value: "",
+			Err:   fmt.Errorf("stream jobs are required"),
+		}
 	}
 
 	// Processing validation
 	if config.Processing.BufferSize <= 0 {
-		return fmt.Errorf("buffer size must be greater than 0")
+		return &ConfigurationError{
+			Field: "BUFFER_SIZE",
+			Value: fmt.Sprintf("%d", config.Processing.BufferSize),
+			Err:   fmt.Errorf("buffer size must be greater than 0"),
+		}
 	}
 	if config.Processing.ReaderWorkers <= 0 {
-		return fmt.Errorf("reader workers must be greater than 0")
+		return &ConfigurationError{
+			Field: "READER_WORKERS",
+			Value: fmt.Sprintf("%d", config.Processing.ReaderWorkers),
+			Err:   fmt.Errorf("reader workers must be greater than 0"),
+		}
 	}
 	if config.Processing.WriterWorkers <= 0 {
-		return fmt.Errorf("writer workers must be greater than 0")
+		return &ConfigurationError{
+			Field: "WRITER_WORKERS",
+			Value: fmt.Sprintf("%d", config.Processing.WriterWorkers),
+			Err:   fmt.Errorf("writer workers must be greater than 0"),
+		}
 	}
 	if config.Processing.ReaderMaxLatency <= 0 {
-		return fmt.Errorf("reader max latency must be greater than 0")
+		return &ConfigurationError{
+			Field: "READER_MAX_LATENCY",
+			Value: config.Processing.ReaderMaxLatency.String(),
+			Err:   fmt.Errorf("reader max latency must be greater than 0"),
+		}
 	}
 	if config.Processing.WriterMaxLatency <= 0 {
-		return fmt.Errorf("writer max latency must be greater than 0")
+		return &ConfigurationError{
+			Field: "WRITER_MAX_LATENCY",
+			Value: config.Processing.WriterMaxLatency.String(),
+			Err:   fmt.Errorf("writer max latency must be greater than 0"),
+		}
 	}
 	if config.Processing.WriterPipelineTimeout <= 0 {
-		return fmt.Errorf("writer pipeline timeout must be greater than 0")
+		return &ConfigurationError{
+			Field: "WRITER_PIPELINE_TIMEOUT",
+			Value: config.Processing.WriterPipelineTimeout.String(),
+			Err:   fmt.Errorf("writer pipeline timeout must be greater than 0"),
+		}
 	}
 
 	// Health validation
 	if config.Health.CheckInterval <= 0 {
-		return fmt.Errorf("health check interval must be greater than 0")
+		return &ConfigurationError{
+			Field: "HEALTH_CHECK_INTERVAL",
+			Value: config.Health.CheckInterval.String(),
+			Err:   fmt.Errorf("health check interval must be greater than 0"),
+		}
 	}
 	if config.Health.MaxRetries < 0 {
-		return fmt.Errorf("health max retries must be non-negative")
+		return &ConfigurationError{
+			Field: "HEALTH_MAX_RETRIES",
+			Value: fmt.Sprintf("%d", config.Health.MaxRetries),
+			Err:   fmt.Errorf("health max retries must be non-negative"),
+		}
 	}
 	if config.Health.Port <= 0 || config.Health.Port > 65535 {
-		return fmt.Errorf("health port must be between 1 and 65535, got %d", config.Health.Port)
+		return &ConfigurationError{
+			Field: "HEALTH_PORT",
+			Value: fmt.Sprintf("%d", config.Health.Port),
+			Err:   fmt.Errorf("health port must be between 1 and 65535"),
+		}
 	}
 
 	return nil

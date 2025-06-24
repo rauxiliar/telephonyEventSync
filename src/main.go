@@ -167,8 +167,9 @@ func main() {
 	// Close message channel
 	close(ch)
 
-	// Close Redis connections
-	closeRedisConnections(config)
+	// Close connections (handles metrics internally)
+	closeESLConnections()
+	closeRedisConnections()
 
 	// Wait for goroutines to finish
 	wg.Wait()
