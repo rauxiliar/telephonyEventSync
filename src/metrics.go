@@ -32,6 +32,14 @@ var (
 		Name: "telephony_esl_reconnections_total",
 		Help: "Total number of ESL reconnections.",
 	})
+	promRedisConnections = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telephony_redis_connections_total",
+		Help: "Total number of established Redis connections.",
+	})
+	promRedisReconnections = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telephony_redis_reconnections_total",
+		Help: "Total number of Redis reconnections.",
+	})
 	promReaderLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "telephony_reader_latency_milliseconds",
 		Help:    "Reader latency in milliseconds.",
@@ -56,6 +64,8 @@ func init() {
 	prometheus.MustRegister(promWriterChannelSize)
 	prometheus.MustRegister(promESLConnections)
 	prometheus.MustRegister(promESLReconnections)
+	prometheus.MustRegister(promRedisConnections)
+	prometheus.MustRegister(promRedisReconnections)
 	prometheus.MustRegister(promReaderLatency)
 	prometheus.MustRegister(promWriterLatency)
 	prometheus.MustRegister(promTotalLatency)
@@ -97,6 +107,18 @@ func (mm *MetricsManager) IncrementESLReconnections() {
 	promESLReconnections.Inc()
 }
 
+// IncrementRedisConnections atomically increments the Redis connections counter
+func (mm *MetricsManager) IncrementRedisConnections() {
+	atomic.AddInt64(&mm.metrics.redisConnections, 1)
+	promRedisConnections.Inc()
+}
+
+// IncrementRedisReconnections atomically increments the Redis reconnections counter
+func (mm *MetricsManager) IncrementRedisReconnections() {
+	atomic.AddInt64(&mm.metrics.redisReconnections, 1)
+	promRedisReconnections.Inc()
+}
+
 // SetReaderChannelSize sets the reader channel size
 func (mm *MetricsManager) SetReaderChannelSize(size int) {
 	mm.metrics.Lock()
@@ -132,25 +154,29 @@ func (mm *MetricsManager) GetSnapshot() MetricsSnapshot {
 	defer mm.metrics.Unlock()
 
 	return MetricsSnapshot{
-		MessagesProcessed: atomic.LoadInt64(&mm.metrics.messagesProcessed),
-		Errors:            atomic.LoadInt64(&mm.metrics.errors),
-		LastSyncTime:      mm.metrics.lastSyncTime,
-		ReaderChannelSize: mm.metrics.readerChannelSize,
-		WriterChannelSize: mm.metrics.writerChannelSize,
-		ESLConnections:    atomic.LoadInt64(&mm.metrics.eslConnections),
-		ESLReconnections:  atomic.LoadInt64(&mm.metrics.eslReconnections),
+		MessagesProcessed:  atomic.LoadInt64(&mm.metrics.messagesProcessed),
+		Errors:             atomic.LoadInt64(&mm.metrics.errors),
+		LastSyncTime:       mm.metrics.lastSyncTime,
+		ReaderChannelSize:  mm.metrics.readerChannelSize,
+		WriterChannelSize:  mm.metrics.writerChannelSize,
+		ESLConnections:     atomic.LoadInt64(&mm.metrics.eslConnections),
+		ESLReconnections:   atomic.LoadInt64(&mm.metrics.eslReconnections),
+		RedisConnections:   atomic.LoadInt64(&mm.metrics.redisConnections),
+		RedisReconnections: atomic.LoadInt64(&mm.metrics.redisReconnections),
 	}
 }
 
 // MetricsSnapshot represents a thread-safe snapshot of metrics
 type MetricsSnapshot struct {
-	MessagesProcessed int64
-	Errors            int64
-	LastSyncTime      time.Time
-	ReaderChannelSize int
-	WriterChannelSize int
-	ESLConnections    int64
-	ESLReconnections  int64
+	MessagesProcessed  int64
+	Errors             int64
+	LastSyncTime       time.Time
+	ReaderChannelSize  int
+	WriterChannelSize  int
+	ESLConnections     int64
+	ESLReconnections   int64
+	RedisConnections   int64
+	RedisReconnections int64
 }
 
 // GetMetricsManager returns the global metrics manager instance

@@ -51,6 +51,10 @@ const (
 	DefaultReaderBlockTime       = 10 * time.Millisecond
 	DefaultEventsToPublish       = "BACKGROUND_JOB,CHANNEL_EXECUTE,CHANNEL_EXECUTE_COMPLETE,DTMF,DETECTED_SPEECH"
 	DefaultEventsToPush          = "CHANNEL_ANSWER,CHANNEL_HANGUP,DTMF,CUSTOM"
+	DefaultWriterMaxRetries      = 3
+	DefaultWriterRetryPauseAfter = 100 * time.Millisecond
+	DefaultWriterRetryQueueSize  = 10000
+	DefaultWriterRetryTTL        = 5 * time.Second
 
 	// Stream defaults
 	DefaultStreamEventsName = "freeswitch:telephony:events"
@@ -120,6 +124,12 @@ type Config struct {
 		// ESL events configuration
 		EventsToPublish []string
 		EventsToPush    []string
+
+		// Writer configuration
+		WriterMaxRetries      int
+		WriterRetryQueueSize  int
+		WriterRetryPauseAfter time.Duration
+		WriterRetryTTL        time.Duration
 	}
 	Health struct {
 		CheckInterval time.Duration
@@ -250,6 +260,12 @@ func getConfig() Config {
 	// Processing - ESL Events
 	config.Processing.EventsToPublish = getEnvAsStringSlice("EVENTS_TO_PUBLISH", DefaultEventsToPublish)
 	config.Processing.EventsToPush = getEnvAsStringSlice("EVENTS_TO_PUSH", DefaultEventsToPush)
+
+	// Processing - Writer configuration
+	config.Processing.WriterMaxRetries = getEnvAsInt("WRITER_MAX_RETRIES", DefaultWriterMaxRetries)
+	config.Processing.WriterRetryPauseAfter = getEnvAsDuration("WRITER_RETRY_PAUSE_AFTER", DefaultWriterRetryPauseAfter)
+	config.Processing.WriterRetryQueueSize = getEnvAsInt("WRITER_RETRY_QUEUE_SIZE", DefaultWriterRetryQueueSize)
+	config.Processing.WriterRetryTTL = getEnvAsDuration("WRITER_RETRY_TTL", DefaultWriterRetryTTL)
 
 	// Health
 	config.Health.CheckInterval = getEnvAsDuration("HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval)

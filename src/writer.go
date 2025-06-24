@@ -9,11 +9,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type latencyCheck struct {
-	uuid      string
-	timestamp int64
-}
-
 var latencyChan = make(chan latencyCheck, 10000)
 
 func startLatencyChecker(config Config) {
@@ -48,11 +43,9 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 		LogError("Pipeline execution failed for worker %d: %v", workerID, err)
 		GetMetricsManager().IncrementErrors()
 
+		// Send all messages to retry queue asynchronously
 		for _, msg := range pendingMsgs {
-			if err := retryMessage(ctx, msg, config); err != nil {
-				LogError("Failed to retry message %s after pipeline failure: %v", msg.uuid, err)
-				GetMetricsManager().IncrementErrors()
-			}
+			sendToRetryQueue(msg)
 		}
 		return
 	}
@@ -88,11 +81,9 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			processedCount++
 		} else {
 			LogError("Failed to add message to stream: %v", cmd.Err())
-			if err := retryMessage(ctx, pendingMsgs[i], config); err != nil {
-				LogError("Failed to retry individual message %s: %v", pendingMsgs[i].uuid, err)
+			// The message is not added to the stream, we need to retry it
+			if !sendToRetryQueue(pendingMsgs[i]) {
 				errorCount++
-			} else {
-				processedCount++
 			}
 		}
 	}
@@ -108,47 +99,11 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 	metricsManager.UpdateLastSyncTime()
 }
 
-// retryMessage retries a single message with exponential backoff
-func retryMessage(ctx context.Context, msg message, config Config) error {
-	maxRetries := 3
-	backoff := 10 * time.Millisecond
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// Create context with timeout for retry
-		retryCtx, cancel := context.WithTimeout(ctx, config.GetRedisRemoteWriteTimeout())
-
-		maxLen := config.Streams.Events.MaxLen
-		if msg.stream == config.Streams.Jobs.Name {
-			maxLen = config.Streams.Jobs.MaxLen
-		}
-
-		// Try to add message directly
-		_, err := rRemote.XAdd(retryCtx, &redis.XAddArgs{
-			Stream: msg.stream,
-			Values: msg.values,
-			MaxLen: maxLen,
-			Approx: true,
-		}).Result()
-
-		cancel()
-
-		if err == nil {
-			return nil // Success
-		}
-
-		LogWarn("Retry attempt %d for message %s failed: %v", attempt+1, msg.uuid, err)
-
-		if attempt < maxRetries-1 {
-			time.Sleep(backoff)
-			backoff *= 2 // Exponential backoff
-		}
-	}
-
-	return fmt.Errorf("failed to retry message %s after %d attempts", msg.uuid, maxRetries)
-}
-
 func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID int, config Config) {
 	defer wg.Done()
+
+	// Panic recovery for the main goroutine
+	defer PanicRecoveryFunc(fmt.Sprintf("writer worker %d", workerID))()
 
 	pipelineTimeout := config.Processing.WriterPipelineTimeout
 	batchSize := config.Processing.WriterBatchSize
@@ -166,13 +121,10 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 
 	// Goroutine to update metrics of the channel
 	go func() {
-		defer func() {
-			LogDebug("Writer metrics updater stopped")
-		}()
-
 		for {
 			select {
 			case <-ctx.Done():
+				LogDebug("Writer metrics updater stopped")
 				return
 			case <-metricsUpdateTicker.C:
 				metricsManager := GetMetricsManager()

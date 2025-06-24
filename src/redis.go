@@ -32,6 +32,9 @@ func initializeRedisConnections(ctx context.Context, config Config) error {
 		}
 	}
 
+	// Increment Redis connections metric
+	GetMetricsManager().IncrementRedisConnections()
+
 	return nil
 }
 

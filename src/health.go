@@ -54,6 +54,9 @@ func (hm *HealthMonitor) Stop() {
 }
 
 func (hm *HealthMonitor) monitor() {
+	// Panic recovery for the health monitor
+	defer PanicRecoveryFunc("health monitor")()
+
 	for {
 		select {
 		case <-hm.ctx.Done():
@@ -169,6 +172,9 @@ func (hm *HealthMonitor) attemptRedisRecovery() {
 	if oldGlobalRemote != nil {
 		oldGlobalRemote.Close()
 	}
+
+	// Increment Redis reconnections metric
+	GetMetricsManager().IncrementRedisReconnections()
 
 	LogInfo("Successfully reconnected to Redis instances")
 }

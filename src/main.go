@@ -12,25 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Metrics struct {
-	sync.Mutex
-	messagesProcessed int64
-	errors            int64
-	lastSyncTime      time.Time
-	readerChannelSize int   // Size of the reader channel
-	writerChannelSize int   // Size of the writer channel
-	eslConnections    int64 // Number of ESL connections established
-	eslReconnections  int64 // Number of ESL reconnections
-}
-
-type message struct {
-	uuid           string
-	stream         string
-	values         map[string]string
-	readTime       time.Time // Timestamp when the message was read and processed
-	eventTimestamp int64     // Original event timestamp (in milliseconds)
-}
-
 var (
 	// Redis client
 	rRemote *redis.Client
@@ -66,6 +47,9 @@ func printMetrics() {
 }
 
 func trimStreams(ctx context.Context, config Config) {
+	// Panic recovery for the trim goroutine
+	defer PanicRecoveryFunc("trimStreams")()
+
 	ticker := time.NewTicker(config.Processing.TrimInterval)
 	defer ticker.Stop()
 
@@ -141,6 +125,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize retry queue
+	initializeRetryQueue(config)
+
 	ch := make(chan message, config.Processing.BufferSize)
 	var wg sync.WaitGroup
 
@@ -164,6 +151,9 @@ func main() {
 	// Start latency checker
 	startLatencyChecker(config)
 
+	// Start retry worker
+	startRetryWorker(ctx, config)
+
 	// Start trim routine (needed for all reader types)
 	go trimStreams(ctx, config)
 
@@ -182,6 +172,9 @@ func main() {
 
 	// Wait for goroutines to finish
 	wg.Wait()
+
+	// Wait for retry worker to finish
+	retryWg.Wait()
 
 	LogInfo("Shutdown complete")
 }

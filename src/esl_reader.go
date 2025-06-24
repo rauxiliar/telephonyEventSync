@@ -122,6 +122,7 @@ func StartWorkers(ctx context.Context, eventsChan <-chan *goesl.Message, outputC
 
 	for range workerCount {
 		go func() {
+			defer PanicRecoveryFunc("ESL worker")()
 			defer workerWg.Done()
 			for evt := range eventsChan {
 				processESLEvent(evt, outputChan, config)
@@ -134,19 +135,21 @@ func StartWorkers(ctx context.Context, eventsChan <-chan *goesl.Message, outputC
 
 // StartMetricsUpdater starts the periodic metrics update
 func StartMetricsUpdater(ctx context.Context, eventsChan chan *goesl.Message) {
-	config := getConfig()
-	metricsUpdateTicker := time.NewTicker(config.GetMetricsUpdateInterval())
-	defer metricsUpdateTicker.Stop()
+	go func() {
+		config := getConfig()
+		metricsUpdateTicker := time.NewTicker(config.GetMetricsUpdateInterval())
+		defer metricsUpdateTicker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-metricsUpdateTicker.C:
-			metricsManager := GetMetricsManager()
-			metricsManager.SetReaderChannelSize(len(eventsChan))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsUpdateTicker.C:
+				metricsManager := GetMetricsManager()
+				metricsManager.SetReaderChannelSize(len(eventsChan))
+			}
 		}
-	}
+	}()
 }
 
 // StartESLConnection starts and maintains the ESL connection to FreeSWITCH
