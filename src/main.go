@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/0x19/goesl"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,81 +23,11 @@ var (
 
 	// Health monitor
 	healthMonitor *HealthMonitor
+
+	// Global channels for metrics
+	globalReaderChan chan *goesl.Message
+	globalWriterChan chan message
 )
-
-func printMetrics() {
-	config := getConfig()
-	ticker := time.NewTicker(config.GetMetricsPrintInterval())
-	defer ticker.Stop()
-
-	for range ticker.C {
-		metricsManager := GetMetricsManager()
-		snapshot := metricsManager.GetSnapshot()
-
-		LogInfo("Messages processed (last 5s): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
-			snapshot.MessagesProcessed,
-			snapshot.Errors,
-			snapshot.ReaderChannelSize,
-			snapshot.WriterChannelSize,
-			snapshot.LastSyncTime.Format(time.RFC3339))
-
-		// Reset counter after each print
-		metricsManager.ResetCounters()
-	}
-}
-
-func trimStreams(ctx context.Context, config Config) {
-	// Panic recovery for the trim goroutine
-	defer PanicRecoveryFunc("trimStreams")()
-
-	ticker := time.NewTicker(config.Processing.TrimInterval)
-	defer ticker.Stop()
-
-	// Use configurable timeout for trim operations
-	trimTimeout := config.GetRedisRemoteWriteTimeout()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Get current Redis time with timeout
-			timeCtx, timeCancel := context.WithTimeout(ctx, trimTimeout)
-			timeCmd := rRemote.Time(timeCtx)
-			if timeCmd.Err() != nil {
-				LogError("Failed to get Redis time: %v", timeCmd.Err())
-				timeCancel()
-				continue
-			}
-			timeCancel()
-
-			// Calculate trim times
-			now := time.Now()
-			eventsTrimTime := now.Add(-config.Streams.Events.ExpireTime).UnixMilli()
-			jobsTrimTime := now.Add(-config.Streams.Jobs.ExpireTime).UnixMilli()
-
-			// Trim events stream with timeout
-			eventsCtx, eventsCancel := context.WithTimeout(ctx, trimTimeout)
-			eventsResult, err := rRemote.XTrimMinID(eventsCtx, config.Streams.Events.Name, fmt.Sprintf("%d-0", eventsTrimTime)).Result()
-			eventsCancel()
-			if err != nil {
-				LogError("Failed to trim events stream: %v", err)
-			} else {
-				LogDebug("Trimmed %d entries from %s", eventsResult, config.Streams.Events.Name)
-			}
-
-			// Trim jobs stream with timeout
-			jobsCtx, jobsCancel := context.WithTimeout(ctx, trimTimeout)
-			jobsResult, err := rRemote.XTrimMinID(jobsCtx, config.Streams.Jobs.Name, fmt.Sprintf("%d-0", jobsTrimTime)).Result()
-			jobsCancel()
-			if err != nil {
-				LogError("Failed to trim jobs stream: %v", err)
-			} else {
-				LogDebug("Trimmed %d entries from %s", jobsResult, config.Streams.Jobs.Name)
-			}
-		}
-	}
-}
 
 func main() {
 	// Create context with cancellation
@@ -129,6 +59,7 @@ func main() {
 	initializeRetryQueue(config)
 
 	ch := make(chan message, config.Processing.BufferSize)
+	globalWriterChan = ch // Set global writer channel for metrics
 	var wg sync.WaitGroup
 
 	// Channel for graceful shutdown

@@ -89,14 +89,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 	}
 
 	// Update metrics in batch
-	metricsManager := GetMetricsManager()
-	for i := int64(0); i < processedCount; i++ {
-		metricsManager.IncrementMessagesProcessed()
-	}
-	for i := int64(0); i < errorCount; i++ {
-		metricsManager.IncrementErrors()
-	}
-	metricsManager.UpdateLastSyncTime()
+	GetMetricsManager().UpdateBatchMetrics(processedCount, errorCount)
 }
 
 func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID int, config Config) {
@@ -114,24 +107,6 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 	pipe := rRemote.Pipeline()
 	lastPipelineExec := time.Now()
 	pendingMsgs := make([]message, 0, batchSize)
-
-	// Ticker to update metrics of the channel
-	metricsUpdateTicker := time.NewTicker(config.GetMetricsUpdateInterval())
-	defer metricsUpdateTicker.Stop()
-
-	// Goroutine to update metrics of the channel
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				LogDebug("Writer metrics updater stopped")
-				return
-			case <-metricsUpdateTicker.C:
-				metricsManager := GetMetricsManager()
-				metricsManager.SetWriterChannelSize(len(ch))
-			}
-		}
-	}()
 
 	for {
 		select {

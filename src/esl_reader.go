@@ -27,12 +27,10 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 
 	// Create events channel
 	eslEventsChan := make(chan *goesl.Message, config.Processing.BufferSize)
+	globalReaderChan = eslEventsChan // Set global reader channel for metrics
 
 	// Initialize worker pool with the events channel
 	workerWg := StartWorkers(ctx, eslEventsChan, ch, config, config.Processing.ReaderWorkers)
-
-	// Start metrics updater with the events channel
-	go StartMetricsUpdater(ctx, eslEventsChan)
 
 	for {
 		select {
@@ -110,25 +108,6 @@ func StartWorkers(ctx context.Context, eventsChan <-chan *goesl.Message, outputC
 	}
 
 	return &workerWg
-}
-
-// StartMetricsUpdater starts the periodic metrics update
-func StartMetricsUpdater(ctx context.Context, eventsChan chan *goesl.Message) {
-	go func() {
-		config := getConfig()
-		metricsUpdateTicker := time.NewTicker(config.GetMetricsUpdateInterval())
-		defer metricsUpdateTicker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-metricsUpdateTicker.C:
-				metricsManager := GetMetricsManager()
-				metricsManager.SetReaderChannelSize(len(eventsChan))
-			}
-		}
-	}()
 }
 
 func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {

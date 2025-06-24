@@ -131,20 +131,10 @@ func (mm *MetricsManager) IncrementRedisReconnections() {
 	promRedisReconnections.Inc()
 }
 
-// SetReaderChannelSize sets the reader channel size
-func (mm *MetricsManager) SetReaderChannelSize(size int) {
-	mm.metrics.Lock()
-	defer mm.metrics.Unlock()
-	mm.metrics.readerChannelSize = size
-	promReaderChannelSize.Set(float64(size))
-}
-
-// SetWriterChannelSize sets the writer channel size
-func (mm *MetricsManager) SetWriterChannelSize(size int) {
-	mm.metrics.Lock()
-	defer mm.metrics.Unlock()
-	mm.metrics.writerChannelSize = size
-	promWriterChannelSize.Set(float64(size))
+// UpdateChannelSizes updates the channel size metrics (called only when needed)
+func (mm *MetricsManager) UpdateChannelSizes(readerSize, writerSize int) {
+	promReaderChannelSize.Set(float64(readerSize))
+	promWriterChannelSize.Set(float64(writerSize))
 }
 
 // UpdateLastSyncTime updates the last sync time
@@ -152,6 +142,24 @@ func (mm *MetricsManager) UpdateLastSyncTime() {
 	mm.metrics.Lock()
 	defer mm.metrics.Unlock()
 	mm.metrics.lastSyncTime = time.Now()
+}
+
+// UpdateBatchMetrics updates multiple metrics in batch (more efficient)
+func (mm *MetricsManager) UpdateBatchMetrics(processedCount, errorCount int64) {
+	// Update counters atomically
+	atomic.AddInt64(&mm.metrics.messagesProcessed, processedCount)
+	atomic.AddInt64(&mm.metrics.errors, errorCount)
+
+	// Update Prometheus metrics
+	for i := int64(0); i < processedCount; i++ {
+		promMessagesProcessed.Inc()
+	}
+	for i := int64(0); i < errorCount; i++ {
+		promErrors.Inc()
+	}
+
+	// Update last sync time
+	mm.UpdateLastSyncTime()
 }
 
 // ResetCounters resets all counters (useful for periodic reporting)
@@ -206,4 +214,38 @@ func ObserveWriterLatency(milliseconds float64) {
 
 func ObserveTotalLatency(milliseconds float64) {
 	promTotalLatency.Observe(milliseconds)
+}
+
+// printMetrics prints metrics periodically
+func printMetrics() {
+	config := getConfig()
+	ticker := time.NewTicker(config.GetMetricsPrintInterval())
+	defer ticker.Stop()
+
+	for range ticker.C {
+		metricsManager := GetMetricsManager()
+
+		// Update channel sizes only when printing metrics (no constant updates)
+		readerSize := 0
+		writerSize := 0
+		if globalReaderChan != nil {
+			readerSize = len(globalReaderChan)
+		}
+		if globalWriterChan != nil {
+			writerSize = len(globalWriterChan)
+		}
+		metricsManager.UpdateChannelSizes(readerSize, writerSize)
+
+		snapshot := metricsManager.GetSnapshot()
+
+		LogInfo("Messages processed (last 5s): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
+			snapshot.MessagesProcessed,
+			snapshot.Errors,
+			readerSize,
+			writerSize,
+			snapshot.LastSyncTime.Format(time.RFC3339))
+
+		// Reset counter after each print
+		metricsManager.ResetCounters()
+	}
 }

@@ -35,8 +35,7 @@ const (
 	DefaultHealthPort          = 9876
 
 	// Metrics defaults
-	DefaultMetricsPrintInterval  = 5 * time.Second
-	DefaultMetricsUpdateInterval = 1 * time.Second
+	DefaultMetricsPrintInterval = 5 * time.Second
 
 	// Processing defaults
 	DefaultBufferSize            = 50000
@@ -137,8 +136,7 @@ type Config struct {
 		Port          int
 	}
 	Metrics struct {
-		PrintInterval  time.Duration
-		UpdateInterval time.Duration
+		PrintInterval time.Duration
 	}
 }
 
@@ -334,7 +332,6 @@ func getConfig() Config {
 
 	// Metrics
 	config.Metrics.PrintInterval = getEnvAsDuration("METRICS_PRINT_INTERVAL", DefaultMetricsPrintInterval)
-	config.Metrics.UpdateInterval = getEnvAsDuration("METRICS_UPDATE_INTERVAL", DefaultMetricsUpdateInterval)
 
 	// Validate configuration
 	if err := validateConfig(&config); err != nil {
@@ -456,14 +453,6 @@ func (c *Config) GetMetricsPrintInterval() time.Duration {
 		return DefaultMetricsPrintInterval
 	}
 	return c.Metrics.PrintInterval
-}
-
-// GetMetricsUpdateInterval returns the metrics update interval with fallback
-func (c *Config) GetMetricsUpdateInterval() time.Duration {
-	if c.Metrics.UpdateInterval == 0 {
-		return DefaultMetricsUpdateInterval
-	}
-	return c.Metrics.UpdateInterval
 }
 
 func (c *Config) GetHealthCheckTimeout() time.Duration {
