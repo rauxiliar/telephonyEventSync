@@ -133,11 +133,8 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		return
 	}
 
-	// Cache UUID lookup - avoid multiple GetHeader calls
-	uuid := evt.GetHeader("Job-UUID")
-	if uuid == "" {
-		uuid = evt.GetHeader("Event-UUID")
-	}
+	// Extract UUID based on event type
+	uuid := extractEventUUID(evt)
 
 	// Only calculate latency if we have a valid timestamp
 	var eventTimestamp int64
@@ -196,6 +193,18 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 			LogError("Failed to send message to channel %s, buffer is full", stream)
 		}
 	}
+}
+
+// extractEventUUID extracts the appropriate UUID based on event type
+// Optimized with early returns and minimal string comparisons
+func extractEventUUID(evt *goesl.Message) string {
+	// Try Job-UUID first (for BACKGROUND_JOB events)
+	if uuid := evt.GetHeader("Job-UUID"); uuid != "" {
+		return uuid
+	}
+
+	// Use GetCallUUID() which checks Caller-Unique-ID
+	return evt.GetCallUUID()
 }
 
 // Helper functions to check if event should be published/pushed
