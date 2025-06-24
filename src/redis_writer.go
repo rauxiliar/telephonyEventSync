@@ -58,7 +58,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 		if cmd.Err() == nil {
 			msg := pendingMsgs[i]
 
-			// Calculate latency
+			// Calculate latency only for successful messages
 			writerTime := time.Now()
 			writerLatency := writerTime.Sub(msg.readTime)
 			ObserveWriterLatency(float64(writerLatency.Milliseconds()))
@@ -68,14 +68,16 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 				"write_time": writerTime.Format(time.RFC3339),
 			})
 
-			// Send to latency channel
-			select {
-			case latencyChan <- latencyCheck{
-				uuid:      msg.uuid,
-				timestamp: msg.eventTimestamp,
-			}:
-			default:
-				LogWarn("Latency channel full, message %s discarded", msg.uuid)
+			// Send to latency channel only for valid timestamps
+			if msg.eventTimestamp > 0 {
+				select {
+				case latencyChan <- latencyCheck{
+					uuid:      msg.uuid,
+					timestamp: msg.eventTimestamp,
+				}:
+				default:
+					LogWarn("Latency channel full, message %s discarded", msg.uuid)
+				}
 			}
 
 			processedCount++
@@ -101,6 +103,10 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 	pipelineTimeout := config.Processing.WriterPipelineTimeout
 	batchSize := config.Processing.WriterBatchSize
 
+	eventsMaxLen := config.Streams.Events.MaxLen
+	jobsMaxLen := config.Streams.Jobs.MaxLen
+	jobsStreamName := config.Streams.Jobs.Name
+
 	// Use configurable timeout for pipeline operations
 	redisTimeout := config.GetRedisRemoteWriteTimeout()
 
@@ -118,10 +124,9 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 				return
 			}
 
-			// Add message to pipeline with configurable timeout
-			maxLen := config.Streams.Events.MaxLen
-			if msg.stream == config.Streams.Jobs.Name {
-				maxLen = config.Streams.Jobs.MaxLen
+			maxLen := eventsMaxLen
+			if msg.stream == jobsStreamName {
+				maxLen = jobsMaxLen
 			}
 
 			// Create context with timeout for this operation

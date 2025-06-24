@@ -111,31 +111,13 @@ func StartWorkers(ctx context.Context, eventsChan <-chan *goesl.Message, outputC
 }
 
 func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
-	var eventTimestamp int64
-	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
-		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
-			eventTimestamp = ts * 1000 // Convert microseconds to nanoseconds
-		}
-	}
-
 	readTime := time.Now()
-	eventTime := time.Unix(0, eventTimestamp)
-	readerLatency := readTime.Sub(eventTime)
 
 	// Generate unique message ID
 	eventType := evt.GetHeader("Event-Name")
-	uuid := evt.GetHeader("Job-UUID")
-	if uuid == "" {
-		uuid = evt.GetHeader("Event-UUID")
-	}
 
-	ObserveReaderLatency(float64(readerLatency.Milliseconds()))
-	LogLatency("reader", readerLatency, config.Processing.ReaderMaxLatency, map[string]any{
-		"uuid":       uuid,
-		"event_type": eventType,
-		"event_time": eventTime.Format(time.RFC3339),
-		"read_time":  readTime.Format(time.RFC3339),
-	})
+	eventsStreamName := config.Streams.Events.Name
+	jobsStreamName := config.Streams.Jobs.Name
 
 	var stream string
 	if isEventToPublish(eventType, config) {
@@ -144,15 +126,40 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 				return
 			}
 		}
-		stream = config.Streams.Jobs.Name
+		stream = jobsStreamName
 	} else if isEventToPush(eventType, config) {
-		stream = config.Streams.Events.Name
+		stream = eventsStreamName
 	} else {
 		return
 	}
 
-	// Create event map with all headers
-	eventMap := make(map[string]string)
+	// Cache UUID lookup - avoid multiple GetHeader calls
+	uuid := evt.GetHeader("Job-UUID")
+	if uuid == "" {
+		uuid = evt.GetHeader("Event-UUID")
+	}
+
+	// Only calculate latency if we have a valid timestamp
+	var eventTimestamp int64
+	if timestamp := evt.GetHeader("Event-Date-Timestamp"); timestamp != "" {
+		if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+			eventTimestamp = ts * 1000 // Convert microseconds to nanoseconds
+			eventTime := time.Unix(0, eventTimestamp)
+			readerLatency := readTime.Sub(eventTime)
+
+			ObserveReaderLatency(float64(readerLatency.Milliseconds()))
+			LogLatency("reader", readerLatency, config.Processing.ReaderMaxLatency, map[string]any{
+				"uuid":       uuid,
+				"event_type": eventType,
+				"event_time": eventTime.Format(time.RFC3339),
+				"read_time":  readTime.Format(time.RFC3339),
+			})
+		}
+	}
+
+	// Pre-allocate map with estimated capacity to avoid reallocations
+	headerCount := len(evt.Headers)
+	eventMap := make(map[string]string, headerCount+1) // +1 for potential body
 	maps.Copy(eventMap, evt.Headers)
 
 	// Add body if exists

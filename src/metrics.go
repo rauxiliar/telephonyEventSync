@@ -151,11 +151,11 @@ func (mm *MetricsManager) UpdateBatchMetrics(processedCount, errorCount int64) {
 	atomic.AddInt64(&mm.metrics.errors, errorCount)
 
 	// Update Prometheus metrics
-	for i := int64(0); i < processedCount; i++ {
-		promMessagesProcessed.Inc()
+	if processedCount > 0 {
+		promMessagesProcessed.Add(float64(processedCount))
 	}
-	for i := int64(0); i < errorCount; i++ {
-		promErrors.Inc()
+	if errorCount > 0 {
+		promErrors.Add(float64(errorCount))
 	}
 
 	// Update last sync time
@@ -219,7 +219,8 @@ func ObserveTotalLatency(milliseconds float64) {
 // printMetrics prints metrics periodically
 func printMetrics() {
 	config := getConfig()
-	ticker := time.NewTicker(config.GetMetricsPrintInterval())
+	metricsInterval := config.GetMetricsPrintInterval()
+	ticker := time.NewTicker(metricsInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -238,7 +239,8 @@ func printMetrics() {
 
 		snapshot := metricsManager.GetSnapshot()
 
-		LogInfo("Messages processed (last 5s): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
+		LogInfo("Messages processed (last %v): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
+			metricsInterval,
 			snapshot.MessagesProcessed,
 			snapshot.Errors,
 			readerSize,

@@ -82,6 +82,8 @@ func (hm *HealthMonitor) performHealthCheck() {
 		} else {
 			LogError("Max Redis recovery attempts reached. Manual intervention required.")
 		}
+
+		return
 	} else {
 		// Reset Redis recovery attempts if Redis is healthy
 		hm.status.Lock()
@@ -102,6 +104,7 @@ func (hm *HealthMonitor) performHealthCheck() {
 
 		// ESL recovery is handled by the main connection loop
 		// No need for separate recovery attempt here
+		return
 	} else {
 		// Reset ESL recovery attempts if ESL is healthy
 		hm.status.Lock()
@@ -109,16 +112,14 @@ func (hm *HealthMonitor) performHealthCheck() {
 		hm.status.Unlock()
 	}
 
-	// Overall health status
-	if redisHealthy && eslHealthy {
-		hm.status.Lock()
-		hm.status.isHealthy = true
-		hm.status.lastError = nil
-		hm.status.lastCheck = time.Now()
-		hm.status.Unlock()
+	// Overall health status - only update if both are healthy
+	hm.status.Lock()
+	hm.status.isHealthy = true
+	hm.status.lastError = nil
+	hm.status.lastCheck = time.Now()
+	hm.status.Unlock()
 
-		LogDebug("Health check passed")
-	}
+	LogDebug("Health check passed")
 }
 
 func (hm *HealthMonitor) checkRedisConnections() bool {
