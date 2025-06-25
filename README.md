@@ -254,8 +254,8 @@ ESL_HEALTH_CHECK_TIMEOUT=3s          # Health check timeout
 REDIS_REMOTE_ADDR=redis.example.com:6379  # Remote Redis address
 REDIS_REMOTE_PASSWORD=                    # Redis password (if any)
 REDIS_REMOTE_DB=2                        # Redis database number
-REDIS_REMOTE_POOL_SIZE=100               # Connection pool size
-REDIS_REMOTE_MIN_IDLE_CONNS=20           # Minimum idle connections
+REDIS_REMOTE_POOL_SIZE=50               # Connection pool size
+REDIS_REMOTE_MIN_IDLE_CONNS=10           # Minimum idle connections
 REDIS_REMOTE_MAX_RETRIES=3               # Maximum retries
 
 # Redis Timeouts
@@ -288,7 +288,7 @@ READER_MAX_LATENCY=300ms                # Maximum reader latency
 READER_BLOCK_TIME=10ms                  # Reader block timeout
 
 # Writer Configuration
-WRITER_WORKERS=20                       # Number of writer workers
+WRITER_WORKERS=10                       # Number of writer workers
 WRITER_BATCH_SIZE=20                    # Pipeline batch size
 WRITER_PIPELINE_TIMEOUT=25ms            # Pipeline execution timeout
 WRITER_MAX_LATENCY=300ms                # Maximum writer latency

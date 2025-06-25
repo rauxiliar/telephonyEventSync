@@ -22,8 +22,8 @@ const (
 	DefaultRedisRemoteAddr       = "127.0.0.1:6379"
 	DefaultRedisRemotePassword   = ""
 	DefaultRedisRemoteDB         = 2
-	DefaultRedisRemotePoolSize   = 100
-	DefaultRedisRemoteMinIdle    = 20
+	DefaultRedisRemotePoolSize   = 50
+	DefaultRedisRemoteMinIdle    = 10
 	DefaultRedisRemoteMaxRetries = 3
 	DefaultRedisWriteTimeout     = 3 * time.Second
 	DefaultRedisDialTimeout      = 3 * time.Second
@@ -40,7 +40,7 @@ const (
 	// Processing defaults
 	DefaultBufferSize              = 50000
 	DefaultReaderProcessingWorkers = 3
-	DefaultWriterWorkers           = 20
+	DefaultWriterWorkers           = 10
 	DefaultWriterBatchSize         = 20
 	DefaultWriterPipelineTimeout   = 25 * time.Millisecond
 	DefaultReaderMaxLatency        = 300 * time.Millisecond
