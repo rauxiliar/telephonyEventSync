@@ -97,6 +97,14 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 	GetMetricsManager().UpdateBatchMetrics(processedCount, errorCount)
 }
 
+// executePipelineAndReset executes the pipeline and resets the writer state
+func executePipelineAndReset(ctx context.Context, pipe *redis.Pipeliner, pendingMsgs *[]message, lastPipelineExec *time.Time, workerID int, config Config) {
+	processPipeline(ctx, *pipe, *pendingMsgs, workerID, config)
+	*pendingMsgs = (*pendingMsgs)[:0] // Clear slice but keep capacity
+	*lastPipelineExec = time.Now()
+	*pipe = rRemote.Pipeline() // Create new pipeline after execution
+}
+
 func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID int, config Config) {
 	defer wg.Done()
 
@@ -122,7 +130,7 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 		case msg, ok := <-ch:
 			if !ok {
 				if pipe.Len() > 0 {
-					processPipeline(ctx, pipe, pendingMsgs, workerID, config)
+					executePipelineAndReset(ctx, &pipe, &pendingMsgs, &lastPipelineExec, workerID, config)
 				}
 				return
 			}
@@ -146,17 +154,11 @@ func writer(ctx context.Context, ch <-chan message, wg *sync.WaitGroup, workerID
 
 			// Execute pipeline if batch is full or timeout reached
 			if pipe.Len() >= batchSize || time.Since(lastPipelineExec) > pipelineTimeout {
-				processPipeline(ctx, pipe, pendingMsgs, workerID, config)
-				pendingMsgs = pendingMsgs[:0] // Clear slice but keep capacity
-				lastPipelineExec = time.Now()
-				pipe = rRemote.Pipeline() // Create new pipeline after execution
+				executePipelineAndReset(ctx, &pipe, &pendingMsgs, &lastPipelineExec, workerID, config)
 			}
 		default:
 			if pipe.Len() > 0 {
-				processPipeline(ctx, pipe, pendingMsgs, workerID, config)
-				pendingMsgs = pendingMsgs[:0] // Clear slice but keep capacity
-				lastPipelineExec = time.Now()
-				pipe = rRemote.Pipeline() // Create new pipeline after execution
+				executePipelineAndReset(ctx, &pipe, &pendingMsgs, &lastPipelineExec, workerID, config)
 			}
 
 			select {
