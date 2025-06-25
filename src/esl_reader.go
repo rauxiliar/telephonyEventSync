@@ -182,6 +182,7 @@ func processESLEvent(evt *goesl.Message, ch chan<- message, config Config) {
 		values:         values,
 		readTime:       readTime,
 		eventTimestamp: eventTimestamp,
+		eventType:      eventType,
 	}
 
 	select {

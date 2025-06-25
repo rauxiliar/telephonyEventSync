@@ -169,12 +169,26 @@ func LogLatency(stage string, latency time.Duration, threshold time.Duration, fi
 		return
 	}
 
-	if fields == nil {
-		fields = make(map[string]any)
+	// Extract key fields for better formatting
+	var logMessage string
+	if uuidVal, ok := fields["uuid"]; ok {
+		logMessage = fmt.Sprintf("LATENCY WARNING | %s: %s > %s | UUID: %s",
+			stage, latency.String(), threshold.String(), fmt.Sprintf("%v", uuidVal))
+		delete(fields, "uuid")
+	} else {
+		logMessage = fmt.Sprintf("LATENCY WARNING | %s: %s > %s",
+			stage, latency.String(), threshold.String())
 	}
-	fields["stage"] = stage
-	fields["latency"] = latency.String()
-	fields["threshold"] = threshold.String()
 
-	LogWithContext(logging.WARNING, "Latency threshold exceeded", fields)
+	if eventTypeVal, ok := fields["event_type"]; ok {
+		logMessage += fmt.Sprintf(" | Event: %s", fmt.Sprintf("%v", eventTypeVal))
+		delete(fields, "event_type")
+	}
+
+	// Add all remaining fields
+	for k, v := range fields {
+		logMessage += fmt.Sprintf(" | %s: %v", k, v)
+	}
+
+	LogWarn("%s", logMessage)
 }

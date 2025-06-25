@@ -12,6 +12,7 @@ type message struct {
 	values         map[string]string
 	readTime       time.Time // Timestamp when the message was read and processed
 	eventTimestamp int64     // Original event timestamp
+	eventType      string    // Event type for logging and metrics
 	retries        int       // Number of retry attempts made
 }
 
@@ -33,4 +34,5 @@ type Metrics struct {
 type latencyCheck struct {
 	uuid      string
 	timestamp int64
+	eventType string
 }

@@ -24,6 +24,7 @@ func startLatencyChecker(config Config) {
 			ObserveTotalLatency(float64(totalLatency.Milliseconds()))
 			LogLatency("total", totalLatency, config.Processing.TotalMaxLatency, map[string]any{
 				"uuid":       check.uuid,
+				"event_type": check.eventType,
 				"event_time": eventTime.Format(time.RFC3339),
 				"check_time": now.Format(time.RFC3339),
 			})
@@ -64,6 +65,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 			ObserveWriterLatency(float64(writerLatency.Milliseconds()))
 			LogLatency("writer", writerLatency, config.Processing.WriterMaxLatency, map[string]any{
 				"uuid":       msg.uuid,
+				"event_type": msg.eventType,
 				"read_time":  msg.readTime.Format(time.RFC3339),
 				"write_time": writerTime.Format(time.RFC3339),
 			})
@@ -74,6 +76,7 @@ func processPipeline(ctx context.Context, pipe redis.Pipeliner, pendingMsgs []me
 				case latencyChan <- latencyCheck{
 					uuid:      msg.uuid,
 					timestamp: msg.eventTimestamp,
+					eventType: msg.eventType,
 				}:
 				default:
 					LogWarn("Latency channel full, message %s discarded", msg.uuid)
