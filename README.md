@@ -283,7 +283,7 @@ TRIM_INTERVAL=10s                       # Stream trimming interval
 
 ```env
 # Reader Configuration
-READER_WORKERS=3                        # Number of ESL reader workers
+READER_PROCESSING_WORKERS=3             # Number of reader processing workers
 READER_MAX_LATENCY=300ms                # Maximum reader latency
 READER_BLOCK_TIME=10ms                  # Reader block timeout
 
@@ -495,7 +495,7 @@ export LOG_LEVEL=debug
 
 #### **For High Throughput**
 
-- Increase `WRITER_WORKERS` and `READER_WORKERS`
+- Increase `WRITER_WORKERS` and `READER_PROCESSING_WORKERS`
 - Increase `BUFFER_SIZE` for high event rates
 - Optimize `WRITER_BATCH_SIZE` for your Redis performance
 

@@ -67,7 +67,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start multiple readers and writers
-	wg.Add(1 + config.Processing.ReaderWorkers)
+	wg.Add(1)
 	go StartESLConnection(ctx, ch, &wg, config)
 
 	wg.Add(1 + config.Processing.WriterWorkers)

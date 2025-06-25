@@ -30,7 +30,7 @@ func StartESLConnection(ctx context.Context, ch chan<- message, wg *sync.WaitGro
 	globalReaderChan = eslEventsChan // Set global reader channel for metrics
 
 	// Initialize worker pool with the events channel
-	workerWg := StartWorkers(ctx, eslEventsChan, ch, config, config.Processing.ReaderWorkers)
+	workerWg := StartWorkers(ctx, eslEventsChan, ch, config, config.Processing.ReaderProcessingWorkers)
 
 	for {
 		select {

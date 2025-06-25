@@ -25,7 +25,7 @@ const (
 	DefaultRedisRemotePoolSize   = 100
 	DefaultRedisRemoteMinIdle    = 20
 	DefaultRedisRemoteMaxRetries = 3
-	DefaultRedisWriteTimeout     = 2 * time.Second
+	DefaultRedisWriteTimeout     = 3 * time.Second
 	DefaultRedisDialTimeout      = 3 * time.Second
 	DefaultRedisPoolTimeout      = 5 * time.Second
 
@@ -38,22 +38,22 @@ const (
 	DefaultMetricsPrintInterval = 5 * time.Second
 
 	// Processing defaults
-	DefaultBufferSize            = 50000
-	DefaultReaderWorkers         = 3
-	DefaultWriterWorkers         = 20
-	DefaultWriterBatchSize       = 20
-	DefaultWriterPipelineTimeout = 25 * time.Millisecond
-	DefaultReaderMaxLatency      = 300 * time.Millisecond
-	DefaultWriterMaxLatency      = 300 * time.Millisecond
-	DefaultTotalMaxLatency       = 500 * time.Millisecond
-	DefaultTrimInterval          = 10 * time.Second
-	DefaultReaderBlockTime       = 10 * time.Millisecond
-	DefaultEventsToPublish       = "BACKGROUND_JOB,CHANNEL_EXECUTE,CHANNEL_EXECUTE_COMPLETE,DTMF,DETECTED_SPEECH"
-	DefaultEventsToPush          = "CHANNEL_ANSWER,CHANNEL_HANGUP,DTMF,CUSTOM"
-	DefaultWriterMaxRetries      = 3
-	DefaultWriterRetryPauseAfter = 100 * time.Millisecond
-	DefaultWriterRetryQueueSize  = 10000
-	DefaultWriterRetryTTL        = 5 * time.Second
+	DefaultBufferSize              = 50000
+	DefaultReaderProcessingWorkers = 3
+	DefaultWriterWorkers           = 20
+	DefaultWriterBatchSize         = 20
+	DefaultWriterPipelineTimeout   = 25 * time.Millisecond
+	DefaultReaderMaxLatency        = 300 * time.Millisecond
+	DefaultWriterMaxLatency        = 300 * time.Millisecond
+	DefaultTotalMaxLatency         = 500 * time.Millisecond
+	DefaultTrimInterval            = 10 * time.Second
+	DefaultReaderBlockTime         = 10 * time.Millisecond
+	DefaultEventsToPublish         = "BACKGROUND_JOB,CHANNEL_EXECUTE,CHANNEL_EXECUTE_COMPLETE,DTMF,DETECTED_SPEECH"
+	DefaultEventsToPush            = "CHANNEL_ANSWER,CHANNEL_HANGUP,DTMF,CUSTOM"
+	DefaultWriterMaxRetries        = 3
+	DefaultWriterRetryPauseAfter   = 100 * time.Millisecond
+	DefaultWriterRetryQueueSize    = 10000
+	DefaultWriterRetryTTL          = 5 * time.Second
 
 	// Stream defaults
 	DefaultStreamEventsName = "freeswitch:telephony:events"
@@ -101,9 +101,9 @@ type Config struct {
 	}
 	Processing struct {
 		// Reader configuration
-		ReaderMaxLatency time.Duration
-		ReaderBlockTime  time.Duration
-		ReaderWorkers    int
+		ReaderMaxLatency        time.Duration
+		ReaderBlockTime         time.Duration
+		ReaderProcessingWorkers int
 
 		// Writer configuration
 		WriterBatchSize       int
@@ -197,11 +197,11 @@ func validateConfig(config *Config) error {
 			Err:   fmt.Errorf("buffer size must be greater than 0"),
 		}
 	}
-	if config.Processing.ReaderWorkers <= 0 {
+	if config.Processing.ReaderProcessingWorkers <= 0 {
 		return &ConfigurationError{
-			Field: "READER_WORKERS",
-			Value: fmt.Sprintf("%d", config.Processing.ReaderWorkers),
-			Err:   fmt.Errorf("reader workers must be greater than 0"),
+			Field: "READER_PROCESSING_WORKERS",
+			Value: fmt.Sprintf("%d", config.Processing.ReaderProcessingWorkers),
+			Err:   fmt.Errorf("reader processing workers must be greater than 0"),
 		}
 	}
 	if config.Processing.WriterWorkers <= 0 {
@@ -298,7 +298,7 @@ func getConfig() Config {
 	// Processing - Reader
 	config.Processing.ReaderMaxLatency = getEnvAsDuration("READER_MAX_LATENCY", DefaultReaderMaxLatency)
 	config.Processing.ReaderBlockTime = getEnvAsDuration("READER_BLOCK_TIME", DefaultReaderBlockTime)
-	config.Processing.ReaderWorkers = getEnvAsInt("READER_WORKERS", DefaultReaderWorkers)
+	config.Processing.ReaderProcessingWorkers = getEnvAsInt("READER_PROCESSING_WORKERS", DefaultReaderProcessingWorkers)
 
 	// Processing - Writer
 	config.Processing.WriterBatchSize = getEnvAsInt("WRITER_BATCH_SIZE", DefaultWriterBatchSize)
