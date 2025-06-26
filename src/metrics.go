@@ -57,78 +57,108 @@ var (
 	})
 )
 
-func init() {
-	prometheus.MustRegister(promMessagesProcessed)
-	prometheus.MustRegister(promErrors)
-	prometheus.MustRegister(promReaderChannelSize)
-	prometheus.MustRegister(promWriterChannelSize)
-	prometheus.MustRegister(promESLConnections)
-	prometheus.MustRegister(promESLReconnections)
-	prometheus.MustRegister(promRedisConnections)
-	prometheus.MustRegister(promRedisReconnections)
-	prometheus.MustRegister(promReaderLatency)
-	prometheus.MustRegister(promWriterLatency)
-	prometheus.MustRegister(promTotalLatency)
-}
-
 // MetricsManager provides thread-safe operations for the existing Metrics struct
 type MetricsManager struct {
 	metrics *Metrics
 }
 
-// NewMetricsManager creates a new metrics manager
-func NewMetricsManager(metrics *Metrics) *MetricsManager {
-	return &MetricsManager{
-		metrics: metrics,
-	}
+// MetricsSnapshot represents a thread-safe snapshot of metrics
+type MetricsSnapshot struct {
+	MessagesProcessed  int64
+	Errors             int64
+	LastSyncTime       time.Time
+	ReaderChannelSize  int
+	WriterChannelSize  int
+	ESLConnections     int64
+	ESLReconnections   int64
+	RedisConnections   int64
+	RedisReconnections int64
+}
+
+func init() {
+	registerPrometheusMetrics()
+}
+
+// registerPrometheusMetrics registers all Prometheus metrics
+func registerPrometheusMetrics() {
+	registerCounterMetrics()
+	registerGaugeMetrics()
+	registerHistogramMetrics()
+}
+
+// registerCounterMetrics registers counter-type Prometheus metrics
+func registerCounterMetrics() {
+	prometheus.MustRegister(promMessagesProcessed)
+	prometheus.MustRegister(promErrors)
+	prometheus.MustRegister(promESLReconnections)
+	prometheus.MustRegister(promRedisReconnections)
+}
+
+// registerGaugeMetrics registers gauge-type Prometheus metrics
+func registerGaugeMetrics() {
+	prometheus.MustRegister(promReaderChannelSize)
+	prometheus.MustRegister(promWriterChannelSize)
+	prometheus.MustRegister(promESLConnections)
+	prometheus.MustRegister(promRedisConnections)
+}
+
+// registerHistogramMetrics registers histogram-type Prometheus metrics
+func registerHistogramMetrics() {
+	prometheus.MustRegister(promReaderLatency)
+	prometheus.MustRegister(promWriterLatency)
+	prometheus.MustRegister(promTotalLatency)
 }
 
 // IncrementMessagesProcessed atomically increments the processed messages counter
 func (mm *MetricsManager) IncrementMessagesProcessed() {
-	atomic.AddInt64(&mm.metrics.messagesProcessed, 1)
-	promMessagesProcessed.Inc()
+	mm.incrementCounter(&mm.metrics.messagesProcessed, promMessagesProcessed)
 }
 
 // IncrementErrors atomically increments the errors counter
 func (mm *MetricsManager) IncrementErrors() {
-	atomic.AddInt64(&mm.metrics.errors, 1)
-	promErrors.Inc()
+	mm.incrementCounter(&mm.metrics.errors, promErrors)
 }
 
 // IncrementESLConnections atomically increments the ESL connections counter
 func (mm *MetricsManager) IncrementESLConnections() {
-	atomic.AddInt64(&mm.metrics.eslConnections, 1)
-	promESLConnections.Inc()
+	mm.incrementCounter(&mm.metrics.eslConnections, promESLConnections)
 }
 
 // SetESLConnections sets the current number of ESL connections
 func (mm *MetricsManager) SetESLConnections(count int64) {
-	atomic.StoreInt64(&mm.metrics.eslConnections, count)
-	promESLConnections.Set(float64(count))
+	mm.setGauge(&mm.metrics.eslConnections, promESLConnections, count)
 }
 
 // IncrementESLReconnections atomically increments the ESL reconnections counter
 func (mm *MetricsManager) IncrementESLReconnections() {
-	atomic.AddInt64(&mm.metrics.eslReconnections, 1)
-	promESLReconnections.Inc()
+	mm.incrementCounter(&mm.metrics.eslReconnections, promESLReconnections)
 }
 
 // IncrementRedisConnections atomically increments the Redis connections counter
 func (mm *MetricsManager) IncrementRedisConnections() {
-	atomic.AddInt64(&mm.metrics.redisConnections, 1)
-	promRedisConnections.Inc()
+	mm.incrementCounter(&mm.metrics.redisConnections, promRedisConnections)
 }
 
 // SetRedisConnections sets the current number of Redis connections
 func (mm *MetricsManager) SetRedisConnections(count int64) {
-	atomic.StoreInt64(&mm.metrics.redisConnections, count)
-	promRedisConnections.Set(float64(count))
+	mm.setGauge(&mm.metrics.redisConnections, promRedisConnections, count)
 }
 
 // IncrementRedisReconnections atomically increments the Redis reconnections counter
 func (mm *MetricsManager) IncrementRedisReconnections() {
-	atomic.AddInt64(&mm.metrics.redisReconnections, 1)
-	promRedisReconnections.Inc()
+	mm.incrementCounter(&mm.metrics.redisReconnections, promRedisReconnections)
+}
+
+// incrementCounter atomically increments both internal and Prometheus counters
+func (mm *MetricsManager) incrementCounter(internalCounter *int64, promCounter prometheus.Counter) {
+	atomic.AddInt64(internalCounter, 1)
+	promCounter.Inc()
+}
+
+// setGauge atomically sets both internal and Prometheus gauge values
+func (mm *MetricsManager) setGauge(internalGauge *int64, promGauge prometheus.Gauge, value int64) {
+	atomic.StoreInt64(internalGauge, value)
+	promGauge.Set(float64(value))
 }
 
 // UpdateChannelSizes updates the channel size metrics (called only when needed)
@@ -146,20 +176,28 @@ func (mm *MetricsManager) UpdateLastSyncTime() {
 
 // UpdateBatchMetrics updates multiple metrics in batch (more efficient)
 func (mm *MetricsManager) UpdateBatchMetrics(processedCount, errorCount int64) {
+	mm.updateBatchCounters(processedCount, errorCount)
+	mm.UpdateLastSyncTime()
+}
+
+// updateBatchCounters updates counters in batch
+func (mm *MetricsManager) updateBatchCounters(processedCount, errorCount int64) {
 	// Update counters atomically
 	atomic.AddInt64(&mm.metrics.messagesProcessed, processedCount)
 	atomic.AddInt64(&mm.metrics.errors, errorCount)
 
 	// Update Prometheus metrics
+	mm.updatePrometheusBatchMetrics(processedCount, errorCount)
+}
+
+// updatePrometheusBatchMetrics updates Prometheus metrics in batch
+func (mm *MetricsManager) updatePrometheusBatchMetrics(processedCount, errorCount int64) {
 	if processedCount > 0 {
 		promMessagesProcessed.Add(float64(processedCount))
 	}
 	if errorCount > 0 {
 		promErrors.Add(float64(errorCount))
 	}
-
-	// Update last sync time
-	mm.UpdateLastSyncTime()
 }
 
 // ResetCounters resets all counters (useful for periodic reporting)
@@ -173,6 +211,11 @@ func (mm *MetricsManager) GetSnapshot() MetricsSnapshot {
 	mm.metrics.Lock()
 	defer mm.metrics.Unlock()
 
+	return mm.createMetricsSnapshot()
+}
+
+// createMetricsSnapshot creates a snapshot of current metrics
+func (mm *MetricsManager) createMetricsSnapshot() MetricsSnapshot {
 	return MetricsSnapshot{
 		MessagesProcessed:  atomic.LoadInt64(&mm.metrics.messagesProcessed),
 		Errors:             atomic.LoadInt64(&mm.metrics.errors),
@@ -186,34 +229,11 @@ func (mm *MetricsManager) GetSnapshot() MetricsSnapshot {
 	}
 }
 
-// MetricsSnapshot represents a thread-safe snapshot of metrics
-type MetricsSnapshot struct {
-	MessagesProcessed  int64
-	Errors             int64
-	LastSyncTime       time.Time
-	ReaderChannelSize  int
-	WriterChannelSize  int
-	ESLConnections     int64
-	ESLReconnections   int64
-	RedisConnections   int64
-	RedisReconnections int64
-}
-
 // GetMetricsManager returns the global metrics manager instance
 func GetMetricsManager() *MetricsManager {
-	return NewMetricsManager(metrics)
-}
-
-func ObserveReaderLatency(milliseconds float64) {
-	promReaderLatency.Observe(milliseconds)
-}
-
-func ObserveWriterLatency(milliseconds float64) {
-	promWriterLatency.Observe(milliseconds)
-}
-
-func ObserveTotalLatency(milliseconds float64) {
-	promTotalLatency.Observe(milliseconds)
+	return &MetricsManager{
+		metrics: metrics,
+	}
 }
 
 // printMetrics prints metrics periodically
@@ -224,30 +244,48 @@ func printMetrics() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		metricsManager := GetMetricsManager()
-
-		// Update channel sizes only when printing metrics (no constant updates)
-		readerSize := 0
-		writerSize := 0
-		if globalReaderChan != nil {
-			readerSize = len(globalReaderChan)
-		}
-		if globalWriterChan != nil {
-			writerSize = len(globalWriterChan)
-		}
-		metricsManager.UpdateChannelSizes(readerSize, writerSize)
-
-		snapshot := metricsManager.GetSnapshot()
-
-		LogInfo("Messages processed (last %v): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
-			metricsInterval,
-			snapshot.MessagesProcessed,
-			snapshot.Errors,
-			readerSize,
-			writerSize,
-			snapshot.LastSyncTime.Format(time.RFC3339))
-
-		// Reset counter after each print
-		metricsManager.ResetCounters()
+		processMetricsPrinting()
 	}
+}
+
+// processMetricsPrinting handles the periodic metrics printing
+func processMetricsPrinting() {
+	metricsManager := GetMetricsManager()
+	updateChannelSizes(metricsManager)
+	printMetricsSnapshot(metricsManager)
+	metricsManager.ResetCounters()
+}
+
+// updateChannelSizes updates channel size metrics
+func updateChannelSizes(metricsManager *MetricsManager) {
+	var readerSize, writerSize int
+	if globalReaderChan != nil {
+		readerSize = len(globalReaderChan)
+	}
+	if globalWriterChan != nil {
+		writerSize = len(globalWriterChan)
+	}
+	metricsManager.UpdateChannelSizes(readerSize, writerSize)
+}
+
+// printMetricsSnapshot prints the current metrics snapshot
+func printMetricsSnapshot(metricsManager *MetricsManager) {
+	config := getConfig()
+	metricsInterval := config.GetMetricsPrintInterval()
+	snapshot := metricsManager.GetSnapshot()
+	var readerSize, writerSize int
+	if globalReaderChan != nil {
+		readerSize = len(globalReaderChan)
+	}
+	if globalWriterChan != nil {
+		writerSize = len(globalWriterChan)
+	}
+
+	LogInfo("Messages processed (last %v): %d, Errors: %d, Reader Channel: %d, Writer Channel: %d, Last sync: %v",
+		metricsInterval,
+		snapshot.MessagesProcessed,
+		snapshot.Errors,
+		readerSize,
+		writerSize,
+		snapshot.LastSyncTime.Format(time.RFC3339))
 }

@@ -11,6 +11,17 @@ type ESLConnectionError struct {
 	Err  error
 }
 
+type RedisConnectionError struct {
+	Address string
+	Err     error
+}
+
+type ConfigurationError struct {
+	Field string
+	Value string
+	Err   error
+}
+
 func (e *ESLConnectionError) Error() string {
 	return fmt.Sprintf("ESL connection failed to %s:%d: %v", e.Host, e.Port, e.Err)
 }
@@ -19,23 +30,12 @@ func (e *ESLConnectionError) Unwrap() error {
 	return e.Err
 }
 
-type RedisConnectionError struct {
-	Address string
-	Err     error
-}
-
 func (e *RedisConnectionError) Error() string {
 	return fmt.Sprintf("Redis connection failed to %s: %v", e.Address, e.Err)
 }
 
 func (e *RedisConnectionError) Unwrap() error {
 	return e.Err
-}
-
-type ConfigurationError struct {
-	Field string
-	Value string
-	Err   error
 }
 
 func (e *ConfigurationError) Error() string {

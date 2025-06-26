@@ -8,6 +8,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// It starts the API server
+// It creates a new Gin router
+// It adds a health check endpoint
+// It adds a metrics endpoint (Prometheus)
+// It starts the server on the configured port
+// It logs the server start message
+// It logs the server error if it fails to start
 func startAPIServer() {
 	router := gin.Default()
 
